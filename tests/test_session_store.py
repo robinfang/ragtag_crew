@@ -44,6 +44,7 @@ class SessionStoreTests(unittest.TestCase):
                     tools=[Tool("noop", "noop", {"type": "object"}, _noop_tool)],
                     system_prompt="system",
                     tool_preset="readonly",
+                    enabled_skills=["review"],
                 )
                 session.messages = [{"role": "user", "content": "hi"}]
                 save_session(123, session)
@@ -53,7 +54,24 @@ class SessionStoreTests(unittest.TestCase):
         self.assertIsNotNone(restored)
         self.assertEqual(restored.model, "openai/GLM-5.1")
         self.assertEqual(restored.tool_preset, "readonly")
+        self.assertEqual(restored.enabled_skills, ["review"])
         self.assertEqual(restored.messages[0]["content"], "hi")
+
+    def test_save_uses_atomic_replace_without_tmp_leftovers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with session_storage(root):
+                session = AgentSession(
+                    model="openai/GLM-5.1",
+                    tools=[Tool("noop", "noop", {"type": "object"}, _noop_tool)],
+                )
+                save_session(123, session)
+
+                json_files = sorted(root.glob("*.json"))
+                tmp_files = sorted(root.glob("*.tmp"))
+
+        self.assertEqual([path.name for path in json_files], ["123.json"])
+        self.assertEqual(tmp_files, [])
 
     def test_expired_sessions_are_deleted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

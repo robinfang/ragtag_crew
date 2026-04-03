@@ -14,6 +14,7 @@ from typing import Any, Callable, Awaitable
 from ragtag_crew.config import settings
 from ragtag_crew.errors import LLMChunkTimeoutError, LLMTimeoutError, TurnTimeoutError
 from ragtag_crew.llm import stream_chat, LLMResponse, ToolCall
+from ragtag_crew.skill_loader import render_skill_prompt
 from ragtag_crew.tools import Tool, build_tool_schemas, get_tool
 
 log = logging.getLogger(__name__)
@@ -44,11 +45,13 @@ class AgentSession:
         tools: list[Tool],
         system_prompt: str = "",
         tool_preset: str = "coding",
+        enabled_skills: list[str] | None = None,
     ):
         self.model = model
         self.tools = tools
         self.system_prompt = system_prompt
         self.tool_preset = tool_preset
+        self.enabled_skills = list(enabled_skills or [])
         self.messages: list[dict[str, Any]] = []
 
         self._callbacks: list[EventCallback] = []
@@ -216,8 +219,15 @@ class AgentSession:
 
     def _build_messages(self) -> list[dict[str, Any]]:
         msgs: list[dict[str, Any]] = []
+        system_parts: list[str] = []
         if self.system_prompt:
-            msgs.append({"role": "system", "content": self.system_prompt})
+            system_parts.append(self.system_prompt.strip())
+        if self.enabled_skills:
+            skill_prompt = render_skill_prompt(self.enabled_skills)
+            if skill_prompt:
+                system_parts.append(f"Active skills:\n{skill_prompt}")
+        if system_parts:
+            msgs.append({"role": "system", "content": "\n\n".join(system_parts)})
         msgs.extend(self.messages)
         return msgs
 

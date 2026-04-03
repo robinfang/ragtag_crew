@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     turn_timeout: int = 360
     bash_timeout: int = 30
     max_turns: int = 20
+    skills_dir: str = "skills"
     session_storage_dir: str = "data/sessions"
     session_ttl_hours: int = 72
 

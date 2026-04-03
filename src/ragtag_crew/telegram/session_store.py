@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
 import time
 from pathlib import Path
 
@@ -26,19 +28,21 @@ def _session_path(chat_id: int) -> Path:
 
 def cleanup_expired_sessions() -> None:
     ttl_seconds = max(settings.session_ttl_hours, 0) * 3600
-    if ttl_seconds <= 0:
-        return
+    root = _storage_dir()
+    if ttl_seconds > 0:
+        cutoff = time.time() - ttl_seconds
+        for path in root.glob("*.json"):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                log.warning("Skipping unreadable session file: %s", path)
+                continue
 
-    cutoff = time.time() - ttl_seconds
-    for path in _storage_dir().glob("*.json"):
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            log.warning("Skipping unreadable session file: %s", path)
-            continue
+            if payload.get("last_active_at", 0) < cutoff:
+                path.unlink(missing_ok=True)
 
-        if payload.get("last_active_at", 0) < cutoff:
-            path.unlink(missing_ok=True)
+    for tmp_path in root.glob("*.tmp"):
+        tmp_path.unlink(missing_ok=True)
 
 
 def load_session(chat_id: int, *, default_system_prompt: str) -> AgentSession | None:
@@ -69,6 +73,7 @@ def load_session(chat_id: int, *, default_system_prompt: str) -> AgentSession | 
         tools=tools,
         system_prompt=payload.get("system_prompt", default_system_prompt),
         tool_preset=tool_preset,
+        enabled_skills=payload.get("enabled_skills", []),
     )
     session.messages = payload.get("messages", [])
     return session
@@ -80,14 +85,30 @@ def save_session(chat_id: int, session: AgentSession) -> None:
         "chat_id": chat_id,
         "model": session.model,
         "tool_preset": session.tool_preset,
+        "enabled_skills": session.enabled_skills,
         "system_prompt": session.system_prompt,
         "messages": session.messages,
         "last_active_at": time.time(),
     }
-    _session_path(chat_id).write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
+    target = _session_path(chat_id)
+    root = target.parent
+    root.mkdir(parents=True, exist_ok=True)
+
+    tmp_fd, tmp_name = tempfile.mkstemp(
+        dir=root,
+        prefix=f"{target.stem}.",
+        suffix=".tmp",
+        text=True,
     )
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as tmp_file:
+            tmp_file.write(json.dumps(payload, ensure_ascii=False, indent=2))
+            tmp_file.flush()
+            os.fsync(tmp_file.fileno())
+        os.replace(tmp_name, target)
+    except Exception:
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
 
 
 def delete_session(chat_id: int) -> None:

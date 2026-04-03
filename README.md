@@ -15,6 +15,7 @@
 - 已实现 `read` / `write` / `edit` / `bash` / `grep` / `find` / `ls` 七个基础工具
 - Telegram 流式输出、HTML 富文本渲染、消息编辑节流、单用户鉴权已接通
 - 已支持 LLM 超时、整轮超时和 JSON 会话持久化
+- 已支持本地 Markdown skill 的会话级启用
 - 图片输入仍在后续阶段
 
 ## 快速开始
@@ -28,6 +29,8 @@ uv run ragtag-crew
 # 或
 uv run python -m ragtag_crew.main
 ```
+
+可选：在仓库根目录创建 `skills/*.md`，再通过 `/skills` 和 `/skill use <name>` 启用。
 
 ## 目录结构
 

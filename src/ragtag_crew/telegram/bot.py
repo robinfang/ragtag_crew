@@ -16,6 +16,7 @@ from telegram.ext import (
 from ragtag_crew.agent import AgentSession
 from ragtag_crew.config import settings
 from ragtag_crew.model_validation import validate_model
+from ragtag_crew.skill_loader import get_skill, list_skills
 from ragtag_crew.telegram.stream import TelegramStreamer
 from ragtag_crew.telegram.session_store import (
     cleanup_expired_sessions,
@@ -49,6 +50,7 @@ def _get_session(chat_id: int) -> AgentSession:
                 tools=get_tools_for_preset(settings.default_tool_preset),
                 system_prompt=_SYSTEM_PROMPT,
                 tool_preset=settings.default_tool_preset,
+                enabled_skills=[],
             )
     return _sessions[chat_id]
 
@@ -70,7 +72,7 @@ async def _cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         f"Model: {settings.default_model}\n"
         f"Tools: {settings.default_tool_preset}\n\n"
         "Send me a message to get started.\n"
-        "Commands: /new /model /tools"
+        "Commands: /new /model /tools /skills /skill"
     )
 
 
@@ -138,6 +140,74 @@ async def _cmd_tools(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text(f"Tools switched to '{preset}': {', '.join(names)}")
 
 
+async def _cmd_skills(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_authorized(update.effective_user.id):
+        return
+    chat_id = update.effective_chat.id
+    session = _get_session(chat_id)
+    available = list_skills()
+    active = ", ".join(session.enabled_skills) if session.enabled_skills else "(none)"
+    if not available:
+        await update.message.reply_text(
+            f"Active skills: {active}\nNo local skills found in {settings.skills_dir}"
+        )
+        return
+
+    lines = [f"Active skills: {active}", "", "Available skills:"]
+    for skill in available:
+        summary = f" - {skill.summary}" if skill.summary else ""
+        lines.append(f"- {skill.name}{summary}")
+    await update.message.reply_text("\n".join(lines))
+
+
+async def _cmd_skill(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_authorized(update.effective_user.id):
+        return
+    chat_id = update.effective_chat.id
+    session = _get_session(chat_id)
+    args = context.args or []
+    if not args:
+        active = ", ".join(session.enabled_skills) if session.enabled_skills else "(none)"
+        await update.message.reply_text(
+            "Usage: /skill use <name> | /skill drop <name> | /skill clear\n"
+            f"Active skills: {active}"
+        )
+        return
+
+    action = args[0].lower()
+    if action == "clear":
+        session.enabled_skills = []
+        save_session(chat_id, session)
+        await update.message.reply_text("Cleared all active skills.")
+        return
+
+    if len(args) < 2:
+        await update.message.reply_text("Usage: /skill use <name> | /skill drop <name>")
+        return
+
+    skill_name = args[1]
+    try:
+        skill = get_skill(skill_name)
+    except KeyError:
+        await update.message.reply_text(f"Unknown skill: {skill_name}")
+        return
+
+    if action == "use":
+        if skill.name not in session.enabled_skills:
+            session.enabled_skills.append(skill.name)
+        save_session(chat_id, session)
+        await update.message.reply_text(f"Enabled skill: {skill.name}")
+        return
+
+    if action == "drop":
+        session.enabled_skills = [name for name in session.enabled_skills if name != skill.name]
+        save_session(chat_id, session)
+        await update.message.reply_text(f"Disabled skill: {skill.name}")
+        return
+
+    await update.message.reply_text("Usage: /skill use <name> | /skill drop <name> | /skill clear")
+
+
 async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_authorized(update.effective_user.id):
         return
@@ -188,6 +258,8 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("new", _cmd_new))
     app.add_handler(CommandHandler("model", _cmd_model))
     app.add_handler(CommandHandler("tools", _cmd_tools))
+    app.add_handler(CommandHandler("skills", _cmd_skills))
+    app.add_handler(CommandHandler("skill", _cmd_skill))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _handle_message))
 
     return app
