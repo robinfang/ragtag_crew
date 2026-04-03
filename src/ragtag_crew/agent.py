@@ -12,6 +12,7 @@ import logging
 from typing import Any, Callable, Awaitable
 
 from ragtag_crew.config import settings
+from ragtag_crew.errors import LLMChunkTimeoutError, LLMTimeoutError, TurnTimeoutError
 from ragtag_crew.llm import stream_chat, LLMResponse, ToolCall
 from ragtag_crew.tools import Tool, build_tool_schemas, get_tool
 
@@ -42,10 +43,12 @@ class AgentSession:
         model: str,
         tools: list[Tool],
         system_prompt: str = "",
+        tool_preset: str = "coding",
     ):
         self.model = model
         self.tools = tools
         self.system_prompt = system_prompt
+        self.tool_preset = tool_preset
         self.messages: list[dict[str, Any]] = []
 
         self._callbacks: list[EventCallback] = []
@@ -101,7 +104,17 @@ class AgentSession:
         final_content = ""
 
         try:
-            final_content = await self._run_loop()
+            final_content = await asyncio.wait_for(
+                self._run_loop(),
+                timeout=settings.turn_timeout,
+            )
+        except (LLMTimeoutError, LLMChunkTimeoutError):
+            raise
+        except asyncio.TimeoutError as exc:
+            self._abort_event.set()
+            timeout_error = TurnTimeoutError(settings.turn_timeout)
+            await self._emit("error", error=timeout_error)
+            raise timeout_error from exc
         except Exception as exc:
             log.exception("Agent loop error")
             await self._emit("error", error=exc)
@@ -124,33 +137,24 @@ class AgentSession:
             await self._emit("message_start")
 
             # Stream LLM call
-            response: LLMResponse = await stream_chat(
-                model=self.model,
-                messages=self._build_messages(),
-                tools=tool_schemas,
-                on_delta=self._on_text_delta,
-                should_abort=self._abort_event.is_set,
-            )
+            try:
+                response: LLMResponse = await stream_chat(
+                    model=self.model,
+                    messages=self._build_messages(),
+                    tools=tool_schemas,
+                    on_delta=self._on_text_delta,
+                    should_abort=self._abort_event.is_set,
+                )
+            except (LLMTimeoutError, LLMChunkTimeoutError) as exc:
+                response = exc.partial_response or LLMResponse()
+                await self._emit("message_end", content=response.content)
+                self._append_assistant_message(response)
+                last_content = response.content
+                raise
 
             await self._emit("message_end", content=response.content)
 
-            # Append assistant message to history
-            assistant_msg: dict[str, Any] = {"role": "assistant"}
-            if response.content:
-                assistant_msg["content"] = response.content
-            if response.tool_calls:
-                assistant_msg["tool_calls"] = [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.name,
-                            "arguments": json.dumps(tc.arguments),
-                        },
-                    }
-                    for tc in response.tool_calls
-                ]
-            self.messages.append(assistant_msg)
+            self._append_assistant_message(response)
 
             last_content = response.content
 
@@ -191,6 +195,24 @@ class AgentSession:
 
     async def _on_text_delta(self, delta: str) -> None:
         await self._emit("message_update", delta=delta)
+
+    def _append_assistant_message(self, response: LLMResponse) -> None:
+        assistant_msg: dict[str, Any] = {"role": "assistant"}
+        if response.content:
+            assistant_msg["content"] = response.content
+        if response.tool_calls:
+            assistant_msg["tool_calls"] = [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.name,
+                        "arguments": json.dumps(tc.arguments),
+                    },
+                }
+                for tc in response.tool_calls
+            ]
+        self.messages.append(assistant_msg)
 
     def _build_messages(self) -> list[dict[str, Any]]:
         msgs: list[dict[str, Any]] = []

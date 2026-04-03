@@ -15,7 +15,14 @@ from telegram.ext import (
 
 from ragtag_crew.agent import AgentSession
 from ragtag_crew.config import settings
+from ragtag_crew.model_validation import validate_model
 from ragtag_crew.telegram.stream import TelegramStreamer
+from ragtag_crew.telegram.session_store import (
+    cleanup_expired_sessions,
+    delete_session,
+    load_session,
+    save_session,
+)
 from ragtag_crew.tools import get_tools_for_preset
 
 log = logging.getLogger(__name__)
@@ -33,11 +40,16 @@ _SYSTEM_PROMPT = (
 
 def _get_session(chat_id: int) -> AgentSession:
     if chat_id not in _sessions:
-        _sessions[chat_id] = AgentSession(
-            model=settings.default_model,
-            tools=get_tools_for_preset(settings.default_tool_preset),
-            system_prompt=_SYSTEM_PROMPT,
-        )
+        restored = load_session(chat_id, default_system_prompt=_SYSTEM_PROMPT)
+        if restored is not None:
+            _sessions[chat_id] = restored
+        else:
+            _sessions[chat_id] = AgentSession(
+                model=settings.default_model,
+                tools=get_tools_for_preset(settings.default_tool_preset),
+                system_prompt=_SYSTEM_PROMPT,
+                tool_preset=settings.default_tool_preset,
+            )
     return _sessions[chat_id]
 
 
@@ -71,6 +83,7 @@ async def _cmd_new(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Please wait — agent is busy.")
         return
     session.reset()
+    delete_session(chat_id)
     await update.message.reply_text("Session cleared.")
 
 
@@ -84,8 +97,22 @@ async def _cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text(f"Current model: {session.model}\n\nUsage: /model <litellm-model-name>")
         return
     new_model = args[0]
+    previous_model = session.model
+    try:
+        summary = await validate_model(new_model)
+    except Exception as exc:
+        await update.message.reply_text(
+            "Model validation failed; keeping current model.\n"
+            f"Current model: {previous_model}\n"
+            f"Error: {exc}"
+        )
+        return
+
     session.model = new_model
-    await update.message.reply_text(f"Model switched to: {new_model}")
+    save_session(chat_id, session)
+    await update.message.reply_text(
+        f"Model switched to: {new_model}\nValidation reply: {summary}"
+    )
 
 
 async def _cmd_tools(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -105,6 +132,8 @@ async def _cmd_tools(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text(f"Unknown preset: {preset}\nAvailable: coding, readonly")
         return
     session.tools = new_tools
+    session.tool_preset = preset
+    save_session(chat_id, session)
     names = [t.name for t in new_tools]
     await update.message.reply_text(f"Tools switched to '{preset}': {', '.join(names)}")
 
@@ -137,6 +166,7 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         except Exception:
             pass
     finally:
+        save_session(chat_id, session)
         await streamer.finalize()
         session.unsubscribe(streamer.on_event)
 
@@ -149,6 +179,8 @@ def build_app() -> Application:
     import ragtag_crew.tools.file_tools  # noqa: F401
     import ragtag_crew.tools.search_tools  # noqa: F401
     import ragtag_crew.tools.shell_tools  # noqa: F401
+
+    cleanup_expired_sessions()
 
     app = Application.builder().token(settings.telegram_bot_token).build()
 

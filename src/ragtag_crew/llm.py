@@ -6,11 +6,16 @@ text deltas and a final ``LLMResponse`` with any tool calls.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
 import litellm
+
+from ragtag_crew.config import settings
+from ragtag_crew.errors import LLMChunkTimeoutError, LLMTimeoutError
 
 # Silence litellm's noisy startup logs.
 litellm.suppress_debug_info = True
@@ -31,6 +36,34 @@ class LLMResponse:
 
     content: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
+
+
+def _completion_provider_options(model: str) -> dict[str, Any]:
+    """Return provider-specific kwargs for litellm.acompletion()."""
+    resolved_model, provider, _dynamic_api_key, _api_base = litellm.get_llm_provider(model=model)
+
+    options: dict[str, Any] = {}
+    upper_model = resolved_model.upper()
+
+    if provider == "anthropic":
+        if settings.anthropic_api_key:
+            options["api_key"] = settings.anthropic_api_key
+        return options
+
+    if provider == "openai":
+        if upper_model.startswith("GLM-"):
+            if settings.glm_api_key:
+                options["api_key"] = settings.glm_api_key
+            if settings.glm_api_base:
+                options["api_base"] = settings.glm_api_base
+            return options
+
+        if settings.openai_api_key:
+            options["api_key"] = settings.openai_api_key
+        if settings.openai_api_base:
+            options["api_base"] = settings.openai_api_base
+
+    return options
 
 
 async def stream_chat(
@@ -68,21 +101,48 @@ async def stream_chat(
         "messages": messages,
         "stream": True,
     }
+    kwargs.update(_completion_provider_options(model))
     if tools:
         kwargs["tools"] = tools
 
     response = await litellm.acompletion(**kwargs)
 
     result = LLMResponse()
+    started_at = time.monotonic()
     # Accumulators for streaming tool-call deltas.
     tc_index_map: dict[int, dict[str, str]] = {}  # index -> {id, name, args_json}
+    stream_iter = response.__aiter__()
 
-    async for chunk in response:
+    while True:
         if should_abort and should_abort():
             aclose = getattr(response, "aclose", None)
             if callable(aclose):
                 await aclose()
             break
+
+        elapsed = time.monotonic() - started_at
+        remaining = settings.llm_timeout - elapsed
+        if remaining <= 0:
+            aclose = getattr(response, "aclose", None)
+            if callable(aclose):
+                await aclose()
+            raise LLMTimeoutError(settings.llm_timeout, partial_response=result)
+
+        chunk_wait = remaining
+        if settings.llm_chunk_timeout > 0:
+            chunk_wait = min(chunk_wait, settings.llm_chunk_timeout)
+
+        try:
+            chunk = await asyncio.wait_for(stream_iter.__anext__(), timeout=chunk_wait)
+        except StopAsyncIteration:
+            break
+        except asyncio.TimeoutError as exc:
+            aclose = getattr(response, "aclose", None)
+            if callable(aclose):
+                await aclose()
+            if settings.llm_chunk_timeout > 0 and chunk_wait == settings.llm_chunk_timeout:
+                raise LLMChunkTimeoutError(settings.llm_chunk_timeout, partial_response=result) from exc
+            raise LLMTimeoutError(settings.llm_timeout, partial_response=result) from exc
 
         delta = chunk.choices[0].delta
 

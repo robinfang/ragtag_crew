@@ -14,12 +14,14 @@ from telegram import Message
 from telegram.error import BadRequest, RetryAfter
 
 from ragtag_crew.llm import ToolCall
+from ragtag_crew.telegram.html import render_telegram_html
 
 log = logging.getLogger(__name__)
 
 # Telegram limits
 _THROTTLE_SECS = 1.5
 _MAX_MSG_LEN = 4096
+_MAX_RENDER_INPUT = 3500
 
 
 def _summarize_args(args: dict) -> str:
@@ -87,12 +89,14 @@ class TelegramStreamer:
         await self._flush()
 
         # Handle overflow beyond the first message
-        overflow = self.buffer[_MAX_MSG_LEN:]
+        _, consumed = self._render_window(self.buffer)
+        overflow = self.buffer[consumed:]
         while overflow:
-            chunk = overflow[:_MAX_MSG_LEN]
-            overflow = overflow[_MAX_MSG_LEN:]
+            rendered, consumed = self._render_window(overflow)
+            raw_chunk = overflow[:consumed]
+            overflow = overflow[consumed:]
             try:
-                msg = await self.message.reply_text(chunk)
+                msg = await self._send_text(rendered, raw_chunk, reply=True)
                 self._extra_messages.append(msg)
             except Exception:
                 log.exception("Failed to send overflow message")
@@ -105,13 +109,14 @@ class TelegramStreamer:
             await self._flush()
 
     async def _flush(self) -> None:
-        text = self.buffer[:_MAX_MSG_LEN] if self.buffer else "..."
-        if text == self._last_sent_text:
+        rendered, consumed = self._render_window(self.buffer)
+        raw_text = self.buffer[:consumed] if self.buffer else "..."
+        if raw_text == self._last_sent_text:
             return
 
         try:
-            await self.message.edit_text(text)
-            self._last_sent_text = text
+            await self._send_text(rendered, raw_text, reply=False)
+            self._last_sent_text = raw_text
             self._last_edit_time = time.monotonic()
         except RetryAfter as exc:
             log.warning("Rate limited, waiting %s seconds", exc.retry_after)
@@ -120,3 +125,32 @@ class TelegramStreamer:
         except BadRequest as exc:
             if "not modified" not in str(exc).lower():
                 log.warning("edit_text failed: %s", exc)
+
+    def _render_window(self, raw_text: str) -> tuple[str, int]:
+        if not raw_text:
+            return "...", 0
+
+        consumed = min(len(raw_text), _MAX_RENDER_INPUT)
+        while consumed > 0:
+            candidate = raw_text[:consumed]
+            rendered = render_telegram_html(candidate)
+            if len(rendered) <= _MAX_MSG_LEN:
+                return rendered, consumed
+            consumed -= max(1, consumed // 8)
+
+        return "...", 0
+
+    async def _send_text(self, rendered: str, raw_text: str, *, reply: bool) -> Message:
+        sender = self.message.reply_text if reply else self.message.edit_text
+
+        try:
+            return await sender(
+                rendered,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        except BadRequest as exc:
+            lowered = str(exc).lower()
+            if "parse entities" not in lowered and "can't parse entities" not in lowered:
+                raise
+            return await sender(raw_text or "...", disable_web_page_preview=True)

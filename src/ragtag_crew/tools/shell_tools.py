@@ -32,7 +32,11 @@ async def _run_bash(command: str, timeout: int | None = None) -> str:
     except asyncio.TimeoutError:
         proc.kill()
         await proc.communicate()  # reap
-        return f"[TIMEOUT] Command exceeded {timeout}s limit."
+        return f"ERROR: Tool timeout after {timeout}s."
+    except asyncio.CancelledError:
+        proc.kill()
+        await proc.communicate()
+        raise
 
     out = stdout.decode(errors="replace")
     err = stderr.decode(errors="replace")

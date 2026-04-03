@@ -9,17 +9,23 @@ class Settings(BaseSettings):
     allowed_user_ids: str = ""
 
     # LLM
-    default_model: str = "anthropic/claude-sonnet-4-20250514"
+    default_model: str = "openai/GLM-5.1"
     anthropic_api_key: str = ""
     openai_api_key: str = ""
+    openai_api_base: str = ""
     glm_api_key: str = ""
-    glm_api_base: str = "https://open.bigmodel.cn/api/paas/v4"
+    glm_api_base: str = "https://open.bigmodel.cn/api/coding/paas/v4"
 
     # Agent
     working_dir: str = "."
     default_tool_preset: str = "coding"
+    llm_timeout: int = 300
+    llm_chunk_timeout: int = 30
+    turn_timeout: int = 360
     bash_timeout: int = 30
     max_turns: int = 20
+    session_storage_dir: str = "data/sessions"
+    session_ttl_hours: int = 72
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

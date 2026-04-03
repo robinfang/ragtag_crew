@@ -1,0 +1,85 @@
+from __future__ import annotations
+
+import json
+import tempfile
+import unittest
+from contextlib import contextmanager
+from pathlib import Path
+from unittest.mock import patch
+
+from ragtag_crew.agent import AgentSession
+from ragtag_crew.config import settings
+from ragtag_crew.telegram.session_store import cleanup_expired_sessions, load_session, save_session
+from ragtag_crew.tools import Tool
+
+import ragtag_crew.tools.file_tools  # noqa: F401
+import ragtag_crew.tools.search_tools  # noqa: F401
+import ragtag_crew.tools.shell_tools  # noqa: F401
+
+
+async def _noop_tool(**_: str) -> str:
+    return "ok"
+
+
+@contextmanager
+def session_storage(path: Path):
+    original_dir = settings.session_storage_dir
+    original_ttl = settings.session_ttl_hours
+    settings.session_storage_dir = str(path)
+    settings.session_ttl_hours = 1
+    try:
+        yield
+    finally:
+        settings.session_storage_dir = original_dir
+        settings.session_ttl_hours = original_ttl
+
+
+class SessionStoreTests(unittest.TestCase):
+    def test_save_and_load_roundtrip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with session_storage(root):
+                session = AgentSession(
+                    model="openai/GLM-5.1",
+                    tools=[Tool("noop", "noop", {"type": "object"}, _noop_tool)],
+                    system_prompt="system",
+                    tool_preset="readonly",
+                )
+                session.messages = [{"role": "user", "content": "hi"}]
+                save_session(123, session)
+
+                restored = load_session(123, default_system_prompt="fallback")
+
+        self.assertIsNotNone(restored)
+        self.assertEqual(restored.model, "openai/GLM-5.1")
+        self.assertEqual(restored.tool_preset, "readonly")
+        self.assertEqual(restored.messages[0]["content"], "hi")
+
+    def test_expired_sessions_are_deleted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with session_storage(root):
+                path = root / "123.json"
+                path.write_text(
+                    json.dumps({"last_active_at": 1}),
+                    encoding="utf-8",
+                )
+                with patch("ragtag_crew.telegram.session_store.time.time", return_value=10_000):
+                    cleanup_expired_sessions()
+
+                self.assertFalse(path.exists())
+
+    def test_corrupt_file_is_ignored(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with session_storage(root):
+                path = root / "123.json"
+                path.write_text("{not json", encoding="utf-8")
+
+                restored = load_session(123, default_system_prompt="fallback")
+
+        self.assertIsNone(restored)
+
+
+if __name__ == "__main__":
+    unittest.main()
