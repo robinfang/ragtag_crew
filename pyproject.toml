@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ragtag-crew"
+version = "0.1.0"
+description = "Self-hosted Telegram AI coding agent"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "python-telegram-bot>=21.0",
+    "litellm>=1.60.0",
+    "pydantic-settings>=2.0",
+]
+
+[project.scripts]
+ragtag-crew = "ragtag_crew.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ragtag_crew"]

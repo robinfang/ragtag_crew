@@ -1,3 +1,12 @@
 .claude/
+.env
+.venv/
+__pycache__/
+*.py[oc]
+build/
+dist/
+*.egg-info/
+data/sessions/
 nul
 pi-telegram-agent/
+py-telegram-agent/
