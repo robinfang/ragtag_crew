@@ -13,7 +13,7 @@ from ragtag_crew.tools.path_utils import resolve_path, resolve_read_path
 
 import ragtag_crew.tools.file_tools  # noqa: F401
 import ragtag_crew.tools.search_tools as search_tools
-import ragtag_crew.tools.shell_tools  # noqa: F401
+import ragtag_crew.tools.shell_tools as shell_tools  # noqa: F401
 
 
 @contextmanager
@@ -201,3 +201,95 @@ class SearchToolTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+import ragtag_crew.tools.file_tools as file_tools  # noqa: E402
+
+
+class ShellDeleteBlockTests(unittest.TestCase):
+    def test_bash_blocks_rm_command(self) -> None:
+        self.assertIn("ERROR", shell_tools._check_delete_attempt("rm file.txt"))
+
+    def test_bash_blocks_del_command(self) -> None:
+        self.assertIn("ERROR", shell_tools._check_delete_attempt("del file.txt"))
+
+    def test_bash_blocks_rmdir_command(self) -> None:
+        self.assertIn("ERROR", shell_tools._check_delete_attempt("rmdir empty_dir"))
+
+    def test_bash_blocks_remove_item(self) -> None:
+        self.assertIn("ERROR", shell_tools._check_delete_attempt("Remove-Item file.txt"))
+
+    def test_bash_blocks_rm_rf(self) -> None:
+        self.assertIn("ERROR", shell_tools._check_delete_attempt("rm -rf /tmp/stuff"))
+
+    def test_bash_allows_non_delete_commands(self) -> None:
+        self.assertIsNone(shell_tools._check_delete_attempt("echo hello"))
+        self.assertIsNone(shell_tools._check_delete_attempt("git status"))
+        self.assertIsNone(shell_tools._check_delete_attempt("pip install requests"))
+        self.assertIsNone(shell_tools._check_delete_attempt("python main.py"))
+
+    def test_bash_allows_program_with_rm_in_name(self) -> None:
+        self.assertIsNone(shell_tools._check_delete_attempt("farm --help"))
+        self.assertIsNone(shell_tools._check_delete_attempt("python alarm.py"))
+
+
+class DeleteFileTests(unittest.IsolatedAsyncioTestCase):
+    async def test_delete_file_removes_existing_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "to_delete.txt"
+            target.write_text("bye", encoding="utf-8")
+
+            with working_dir(root):
+                result = await file_tools._delete_file("to_delete.txt")
+
+            self.assertIn("OK", result)
+            self.assertFalse(target.exists())
+
+    async def test_delete_file_returns_error_for_nonexistent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with working_dir(Path(tmp)):
+                result = await file_tools._delete_file("nope.txt")
+
+            self.assertIn("ERROR", result)
+            self.assertIn("not found", result)
+
+    async def test_delete_file_blocks_path_outside_working_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp) / "work"
+            outside = Path(tmp) / "other"
+            base.mkdir()
+            outside.mkdir()
+            (outside / "secret.txt").write_text("secret", encoding="utf-8")
+
+            with working_dir(base):
+                result = await file_tools._delete_file(str(outside / "secret.txt"))
+
+            self.assertIn("ERROR", result)
+            self.assertTrue((outside / "secret.txt").exists())
+
+    async def test_delete_file_removes_empty_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "empty_dir"
+            target.mkdir()
+
+            with working_dir(root):
+                result = await file_tools._delete_file("empty_dir")
+
+            self.assertIn("OK", result)
+            self.assertFalse(target.exists())
+
+    async def test_delete_file_refuses_nonempty_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "full_dir"
+            target.mkdir()
+            (target / "child.txt").write_text("x", encoding="utf-8")
+
+            with working_dir(root):
+                result = await file_tools._delete_file("full_dir")
+
+            self.assertIn("ERROR", result)
+            self.assertIn("not empty", result)
+            self.assertTrue(target.exists())

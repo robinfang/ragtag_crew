@@ -150,3 +150,47 @@ edit_tool = register_tool(
         execute=_edit_file,
     )
 )
+
+
+# ---- delete ---------------------------------------------------------------
+
+async def _delete_file(path: str) -> str:
+    try:
+        resolved = resolve_path(path)
+    except PermissionError as exc:
+        return f"ERROR: {exc}"
+    if resolved.is_file():
+        resolved.unlink()
+        return f"OK: deleted {path}"
+    if resolved.is_dir():
+        try:
+            resolved.rmdir()
+            return f"OK: deleted directory {path}"
+        except OSError as exc:
+            if exc.errno in (39, 41):
+                return f"ERROR: directory not empty: {path} (remove contents first)"
+            return f"ERROR: {exc}"
+    return f"ERROR: not found: {path}"
+
+
+delete_file_tool = register_tool(
+    Tool(
+        name="delete_file",
+        description=(
+            "Delete a file or empty directory inside the working directory. "
+            "Non-empty directories are rejected. "
+            "Do NOT use `bash rm`/`del`/`rmdir` to delete files."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "File or directory path (relative to working dir)",
+                },
+            },
+            "required": ["path"],
+        },
+        execute=_delete_file,
+    )
+)
