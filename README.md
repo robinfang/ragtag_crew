@@ -16,6 +16,12 @@
 - Telegram 流式输出、HTML 富文本渲染、消息编辑节流、单用户鉴权已接通
 - 已支持 LLM 超时、整轮超时和 JSON 会话持久化
 - 已支持本地 Markdown skill 的会话级启用
+- 已接入 `PROJECT.md` / `USER.local.md` / `MEMORY.md` 分层上下文
+- 已提供最小 `/memory` 闭环：追加到 `memory/inbox.md`、查看文件、手动 promote 到长期层
+- 已支持最小 `session_summary` 会话压缩：只保留最近消息窗口，其余折叠为摘要
+- 已提供最小 `/context` 命令：查看当前摘要状态，并手动触发一次会话压缩
+- 已建立阶段 1 外部能力接入层骨架，开始支持平台工具与 `MCP client`
+- Windows 下可启用 `Everything` 搜索适配器；可通过 `/mcp` 查看已配置 MCP 状态
 - 图片输入仍在后续阶段
 
 ## 快速开始
@@ -30,7 +36,14 @@ uv run ragtag-crew
 uv run python -m ragtag_crew.main
 ```
 
-可选：在仓库根目录创建 `skills/*.md`，再通过 `/skills` 和 `/skill use <name>` 启用。
+可选：
+
+- 在仓库根目录创建 `skills/*.md`，再通过 `/skills` 和 `/skill use <name>` 启用
+- 编辑 `PROJECT.md`、`MEMORY.md` 和本地私有的 `USER.local.md` 来调节长期上下文
+- 用 `/memory add <note>` 快速把一条长期信息记到 `memory/inbox.md`
+- 用 `/memory promote [target]` 把 `inbox.md` 中待整理条目并入 `MEMORY.md` 或指定记忆文件
+- 用 `/context` 查看当前会话摘要状态，必要时用 `/context compress` 手动收口
+- 复制 `mcp_servers.example.json` 为 `mcp_servers.local.json` 后，可通过 `/mcp` 查看 MCP server 状态
 
 ## 目录结构
 
@@ -52,6 +65,10 @@ ragtag_crew/
 │           └── search_tools.py
 ├── archive/
 │   └── pi-sdk-validation/    # 早期 Pi SDK 验证资料
+├── PROJECT.md                # 仓库共享的项目背景
+├── MEMORY.md                 # 长期记忆索引
+├── memory/                   # 长期记忆正文
+├── skills/                   # 本地 skill
 ├── python-telegram-agent-proposal.md
 ├── pyproject.toml
 └── .env.example
@@ -66,6 +83,8 @@ ragtag_crew/
 ## 相关文档
 
 - `python-telegram-agent-proposal.md`：当前 Python 方案设计文档
+- `project-roadmap.md`：当前项目级路线图与阶段安排
+- `search-gateway-plan.md`：搜索内置层与独立 gateway 的专项设计
 - `archive/pi-sdk-validation/`：早期 Pi SDK 方向的验证记录，仅保留参考
 
 ## License

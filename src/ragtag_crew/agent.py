@@ -9,12 +9,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from typing import Any, Callable, Awaitable
 
 from ragtag_crew.config import settings
+from ragtag_crew.context_builder import build_system_prompt
 from ragtag_crew.errors import LLMChunkTimeoutError, LLMTimeoutError, TurnTimeoutError
 from ragtag_crew.llm import stream_chat, LLMResponse, ToolCall
-from ragtag_crew.skill_loader import render_skill_prompt
+from ragtag_crew.session_summary import compact_history
 from ragtag_crew.tools import Tool, build_tool_schemas, get_tool
 
 log = logging.getLogger(__name__)
@@ -46,12 +48,20 @@ class AgentSession:
         system_prompt: str = "",
         tool_preset: str = "coding",
         enabled_skills: list[str] | None = None,
+        session_prompt: str = "",
+        session_summary: str = "",
+        summary_updated_at: float | None = None,
+        recent_message_count: int = 0,
     ):
         self.model = model
         self.tools = tools
         self.system_prompt = system_prompt
         self.tool_preset = tool_preset
         self.enabled_skills = list(enabled_skills or [])
+        self.session_prompt = session_prompt
+        self.session_summary = session_summary
+        self.summary_updated_at = summary_updated_at
+        self.recent_message_count = recent_message_count
         self.messages: list[dict[str, Any]] = []
 
         self._callbacks: list[EventCallback] = []
@@ -88,6 +98,22 @@ class AgentSession:
     def reset(self) -> None:
         """Clear conversation history (start a new session)."""
         self.messages.clear()
+        self.session_prompt = ""
+        self.session_summary = ""
+        self.summary_updated_at = None
+        self.recent_message_count = 0
+
+    def compact(self, *, force: bool = False) -> bool:
+        """Compact older history into ``session_summary``.
+
+        When ``force`` is false, compaction follows the configured trigger.
+        When ``force`` is true, it compacts whenever history exceeds the
+        configured recent-message window.
+        """
+        before_messages = list(self.messages)
+        before_summary = self.session_summary
+        self._maybe_compact_history(force=force)
+        return self.messages != before_messages or self.session_summary != before_summary
 
     # -- core loop ----------------------------------------------------------
 
@@ -123,6 +149,7 @@ class AgentSession:
             await self._emit("error", error=exc)
             raise
         finally:
+            self._maybe_compact_history()
             self._busy = False
             await self._emit("agent_end", content=final_content)
 
@@ -217,17 +244,41 @@ class AgentSession:
             ]
         self.messages.append(assistant_msg)
 
+    def _maybe_compact_history(self, *, force: bool = False) -> None:
+        self.recent_message_count = len(self.messages)
+        trigger = settings.session_summary_trigger_messages
+        keep_count = max(settings.session_summary_recent_messages, 1)
+
+        if force:
+            if len(self.messages) <= keep_count:
+                return
+        elif trigger <= 0 or len(self.messages) <= trigger:
+            return
+
+        summary, recent_messages = compact_history(
+            messages=self.messages,
+            previous_summary=self.session_summary,
+            recent_message_count=keep_count,
+            max_chars=settings.session_summary_max_chars,
+        )
+        if recent_messages == self.messages and summary == self.session_summary:
+            return
+
+        self.messages = recent_messages
+        self.session_summary = summary
+        self.summary_updated_at = time.time()
+        self.recent_message_count = len(self.messages)
+
     def _build_messages(self) -> list[dict[str, Any]]:
         msgs: list[dict[str, Any]] = []
-        system_parts: list[str] = []
-        if self.system_prompt:
-            system_parts.append(self.system_prompt.strip())
-        if self.enabled_skills:
-            skill_prompt = render_skill_prompt(self.enabled_skills)
-            if skill_prompt:
-                system_parts.append(f"Active skills:\n{skill_prompt}")
-        if system_parts:
-            msgs.append({"role": "system", "content": "\n\n".join(system_parts)})
+        system_prompt = build_system_prompt(
+            base_system_prompt=self.system_prompt,
+            enabled_skills=self.enabled_skills,
+            session_prompt=self.session_prompt,
+            session_summary=self.session_summary,
+        )
+        if system_prompt:
+            msgs.append({"role": "system", "content": system_prompt})
         msgs.extend(self.messages)
         return msgs
 

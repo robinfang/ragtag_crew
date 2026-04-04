@@ -11,6 +11,7 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "python-telegram-bot>=21.0",
     "litellm>=1.60.0",
+    "mcp>=1.17.0",
     "pydantic-settings>=2.0",
 ]
 

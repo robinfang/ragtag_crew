@@ -74,6 +74,10 @@ def load_session(chat_id: int, *, default_system_prompt: str) -> AgentSession | 
         system_prompt=payload.get("system_prompt", default_system_prompt),
         tool_preset=tool_preset,
         enabled_skills=payload.get("enabled_skills", []),
+        session_prompt=payload.get("session_prompt", ""),
+        session_summary=payload.get("session_summary", ""),
+        summary_updated_at=payload.get("summary_updated_at"),
+        recent_message_count=payload.get("recent_message_count", 0),
     )
     session.messages = payload.get("messages", [])
     return session
@@ -87,6 +91,10 @@ def save_session(chat_id: int, session: AgentSession) -> None:
         "tool_preset": session.tool_preset,
         "enabled_skills": session.enabled_skills,
         "system_prompt": session.system_prompt,
+        "session_prompt": session.session_prompt,
+        "session_summary": session.session_summary,
+        "summary_updated_at": session.summary_updated_at,
+        "recent_message_count": session.recent_message_count,
         "messages": session.messages,
         "last_active_at": time.time(),
     }

@@ -25,8 +25,21 @@ class Settings(BaseSettings):
     bash_timeout: int = 30
     max_turns: int = 20
     skills_dir: str = "skills"
+    project_context_file: str = "PROJECT.md"
+    user_context_file: str = "USER.local.md"
+    memory_index_file: str = "MEMORY.md"
+    memory_dir: str = "memory"
     session_storage_dir: str = "data/sessions"
     session_ttl_hours: int = 72
+    session_summary_trigger_messages: int = 18
+    session_summary_recent_messages: int = 12
+    session_summary_max_chars: int = 4000
+    external_tool_timeout: int = 30
+    mcp_servers_file: str = "mcp_servers.local.json"
+    everything_enabled: bool = False
+    everything_command: str = "es.exe"
+    everything_timeout: int = 10
+    everything_max_results: int = 50
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

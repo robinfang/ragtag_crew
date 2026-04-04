@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 
 from telegram import Update
 from telegram.ext import (
@@ -15,6 +16,17 @@ from telegram.ext import (
 
 from ragtag_crew.agent import AgentSession
 from ragtag_crew.config import settings
+from ragtag_crew.external import (
+    ensure_external_capabilities_initialized,
+    get_mcp_statuses,
+)
+from ragtag_crew.memory_store import (
+    append_memory_note,
+    list_memory_files,
+    promote_inbox,
+    read_memory_file,
+    read_memory_index,
+)
 from ragtag_crew.model_validation import validate_model
 from ragtag_crew.skill_loader import get_skill, list_skills
 from ragtag_crew.telegram.stream import TelegramStreamer
@@ -72,7 +84,34 @@ async def _cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         f"Model: {settings.default_model}\n"
         f"Tools: {settings.default_tool_preset}\n\n"
         "Send me a message to get started.\n"
-        "Commands: /new /model /tools /skills /skill"
+        "Commands: /new /model /tools /skills /skill /memory /context /mcp"
+    )
+
+
+def _truncate_reply(text: str, limit: int = 3500) -> str:
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3].rstrip() + "..."
+
+
+def _format_summary_time(timestamp: float | None) -> str:
+    if not timestamp:
+        return "never"
+    return datetime.fromtimestamp(timestamp).isoformat(timespec="seconds")
+
+
+def _context_status_text(session: AgentSession) -> str:
+    summary = _truncate_reply(session.session_summary, limit=1200) if session.session_summary else "(empty)"
+    return (
+        "Context status:\n"
+        f"Messages kept: {len(session.messages)}\n"
+        f"Recent window target: {settings.session_summary_recent_messages}\n"
+        f"Auto-compact trigger: {settings.session_summary_trigger_messages}\n"
+        f"Summary updated at: {_format_summary_time(session.summary_updated_at)}\n\n"
+        "Session summary:\n"
+        f"{summary}\n\n"
+        "Usage: /context show | /context compress"
     )
 
 
@@ -208,6 +247,132 @@ async def _cmd_skill(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text("Usage: /skill use <name> | /skill drop <name> | /skill clear")
 
 
+async def _cmd_memory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_authorized(update.effective_user.id):
+        return
+
+    args = context.args or []
+    if not args:
+        index = read_memory_index()
+        files = list_memory_files()
+        file_lines = [f"- {name}" for name in files] or ["- (none)"]
+        index_text = _truncate_reply(index) if index else "(empty)"
+        file_block = "\n".join(file_lines)
+        await update.message.reply_text(
+            "Memory index (MEMORY.md):\n"
+            f"{index_text}\n\n"
+            "Memory files:\n"
+            f"{file_block}\n\n"
+            "Usage: /memory list | /memory show <name> | /memory add <note> | /memory promote [target]"
+        )
+        return
+
+    action = args[0].lower()
+    if action == "list":
+        files = list_memory_files()
+        if not files:
+            await update.message.reply_text("Memory files:\n- (none)")
+            return
+        await update.message.reply_text("Memory files:\n" + "\n".join(f"- {name}" for name in files))
+        return
+
+    if action == "show":
+        if len(args) < 2:
+            await update.message.reply_text("Usage: /memory show <index|file>")
+            return
+        target = args[1]
+        try:
+            content = read_memory_file(target)
+        except (FileNotFoundError, ValueError) as exc:
+            await update.message.reply_text(str(exc))
+            return
+        content = _truncate_reply(content) if content else "(empty)"
+        await update.message.reply_text(content)
+        return
+
+    if action == "add":
+        note = " ".join(args[1:]).strip()
+        if not note:
+            await update.message.reply_text("Usage: /memory add <note>")
+            return
+        path = append_memory_note(note)
+        await update.message.reply_text(f"Added memory note to {path.parent.name}/{path.name}")
+        return
+
+    if action == "promote":
+        target = args[1] if len(args) > 1 else "MEMORY.md"
+        try:
+            path, count = promote_inbox(target)
+        except ValueError as exc:
+            await update.message.reply_text(str(exc))
+            return
+        location = path.name if path.name == "MEMORY.md" else f"{path.parent.name}/{path.name}"
+        await update.message.reply_text(f"Promoted {count} inbox entr{'y' if count == 1 else 'ies'} to {location}")
+        return
+
+    await update.message.reply_text(
+        "Usage: /memory list | /memory show <name> | /memory add <note> | /memory promote [target]"
+    )
+
+
+async def _cmd_context(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_authorized(update.effective_user.id):
+        return
+
+    chat_id = update.effective_chat.id
+    session = _get_session(chat_id)
+    args = context.args or []
+    if not args or args[0].lower() == "show":
+        await update.message.reply_text(_context_status_text(session))
+        return
+
+    action = args[0].lower()
+    if action == "compress":
+        if session.is_busy:
+            await update.message.reply_text("Please wait — agent is busy.")
+            return
+
+        changed = session.compact(force=True)
+        save_session(chat_id, session)
+        if not changed:
+            await update.message.reply_text(
+                "No compaction needed yet.\n\n" + _context_status_text(session)
+            )
+            return
+
+        await update.message.reply_text(
+            "Context compacted.\n\n" + _context_status_text(session)
+        )
+        return
+
+    await update.message.reply_text("Usage: /context show | /context compress")
+
+
+def _format_mcp_status_text() -> str:
+    statuses = get_mcp_statuses()
+    if not statuses:
+        return (
+            "No MCP servers configured.\n"
+            f"Create {settings.mcp_servers_file} from mcp_servers.example.json."
+        )
+
+    lines = ["MCP status:"]
+    for status in statuses:
+        state = "ready" if status.ready else "not ready"
+        lines.append(f"- {status.key}: {state}")
+        if status.detail:
+            lines.append(f"  detail: {status.detail}")
+        if status.tool_names:
+            lines.append(f"  tools: {', '.join(status.tool_names)}")
+    return "\n".join(lines)
+
+
+async def _cmd_mcp(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_authorized(update.effective_user.id):
+        return
+    await update.message.reply_text(_format_mcp_status_text())
+
+
 async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_authorized(update.effective_user.id):
         return
@@ -251,6 +416,7 @@ def build_app() -> Application:
     import ragtag_crew.tools.shell_tools  # noqa: F401
 
     cleanup_expired_sessions()
+    ensure_external_capabilities_initialized()
 
     app = Application.builder().token(settings.telegram_bot_token).build()
 
@@ -260,6 +426,9 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("tools", _cmd_tools))
     app.add_handler(CommandHandler("skills", _cmd_skills))
     app.add_handler(CommandHandler("skill", _cmd_skill))
+    app.add_handler(CommandHandler("memory", _cmd_memory))
+    app.add_handler(CommandHandler("context", _cmd_context))
+    app.add_handler(CommandHandler("mcp", _cmd_mcp))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _handle_message))
 
     return app

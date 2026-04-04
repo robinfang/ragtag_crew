@@ -45,6 +45,10 @@ class SessionStoreTests(unittest.TestCase):
                     system_prompt="system",
                     tool_preset="readonly",
                     enabled_skills=["review"],
+                    session_prompt="prefer concise answers",
+                    session_summary="Discussed repository layout.",
+                    summary_updated_at=1234.5,
+                    recent_message_count=6,
                 )
                 session.messages = [{"role": "user", "content": "hi"}]
                 save_session(123, session)
@@ -55,6 +59,10 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual(restored.model, "openai/GLM-5.1")
         self.assertEqual(restored.tool_preset, "readonly")
         self.assertEqual(restored.enabled_skills, ["review"])
+        self.assertEqual(restored.session_prompt, "prefer concise answers")
+        self.assertEqual(restored.session_summary, "Discussed repository layout.")
+        self.assertEqual(restored.summary_updated_at, 1234.5)
+        self.assertEqual(restored.recent_message_count, 6)
         self.assertEqual(restored.messages[0]["content"], "hi")
 
     def test_save_uses_atomic_replace_without_tmp_leftovers(self) -> None:

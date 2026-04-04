@@ -60,7 +60,7 @@ class SkillLoaderTests(unittest.TestCase):
 
         self.assertEqual(messages[0]["role"], "system")
         self.assertIn("base prompt", messages[0]["content"])
-        self.assertIn("Active skills:", messages[0]["content"])
+        self.assertIn("## Active Skills", messages[0]["content"])
         self.assertIn("Focus on bugs first.", messages[0]["content"])
 
     def test_get_skill_raises_for_unknown_name(self) -> None:

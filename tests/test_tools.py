@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from ragtag_crew.config import settings
-from ragtag_crew.tools import get_tools_for_preset
+from ragtag_crew.tools import Tool, _ALL_TOOLS, get_tools_for_preset, register_tool
 from ragtag_crew.tools.path_utils import resolve_path
 
 import ragtag_crew.tools.file_tools  # noqa: F401
@@ -49,6 +49,9 @@ class PathSandboxTests(unittest.TestCase):
 
 
 class ToolPresetTests(unittest.TestCase):
+    def tearDown(self) -> None:
+        _ALL_TOOLS.pop("external_demo", None)
+
     def test_unknown_preset_raises_key_error(self) -> None:
         with self.assertRaises(KeyError):
             get_tools_for_preset("unknown")
@@ -56,6 +59,25 @@ class ToolPresetTests(unittest.TestCase):
     def test_readonly_preset_contains_only_safe_tools(self) -> None:
         tools = get_tools_for_preset("readonly")
         self.assertEqual([tool.name for tool in tools], ["read", "grep", "find", "ls"])
+
+    def test_dynamic_tool_can_join_preset_via_metadata(self) -> None:
+        async def _execute() -> str:
+            return "ok"
+
+        register_tool(
+            Tool(
+                name="external_demo",
+                description="Demo external tool",
+                parameters={"type": "object", "properties": {}},
+                execute=_execute,
+                source_type="mcp",
+                source_name="demo",
+                enabled_in_presets=("coding",),
+            )
+        )
+
+        tools = get_tools_for_preset("coding")
+        self.assertIn("external_demo", [tool.name for tool in tools])
 
 
 class SearchToolTests(unittest.IsolatedAsyncioTestCase):

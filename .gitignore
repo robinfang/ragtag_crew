@@ -7,6 +7,9 @@ build/
 dist/
 *.egg-info/
 data/sessions/
+USER.local.md
+memory/inbox.md
+mcp_servers.local.json
 nul
 pi-telegram-agent/
 py-telegram-agent/

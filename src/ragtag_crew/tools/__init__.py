@@ -18,6 +18,9 @@ class Tool:
     description: str
     parameters: dict[str, Any]  # JSON Schema
     execute: Callable[..., Awaitable[str]]
+    source_type: str = "builtin"
+    source_name: str = "builtin"
+    enabled_in_presets: tuple[str, ...] = field(default_factory=tuple)
 
     def to_openai_schema(self) -> dict[str, Any]:
         """Return the tool definition in OpenAI function-calling format
@@ -75,7 +78,24 @@ def get_tools_for_preset(preset: str) -> list[Tool]:
     names = TOOL_PRESETS.get(preset)
     if names is None:
         raise KeyError(f"Unknown tool preset: {preset}")
-    return [_ALL_TOOLS[n] for n in names if n in _ALL_TOOLS]
+
+    tools: list[Tool] = []
+    seen: set[str] = set()
+
+    for name in names:
+        tool = _ALL_TOOLS.get(name)
+        if tool is None or tool.name in seen:
+            continue
+        tools.append(tool)
+        seen.add(tool.name)
+
+    for tool in _ALL_TOOLS.values():
+        if preset not in tool.enabled_in_presets or tool.name in seen:
+            continue
+        tools.append(tool)
+        seen.add(tool.name)
+
+    return tools
 
 
 def build_tool_schemas(tools: list[Tool]) -> list[dict[str, Any]]:
