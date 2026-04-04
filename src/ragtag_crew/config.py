@@ -77,7 +77,16 @@ class Settings(BaseSettings):
     def get_allowed_user_ids(self) -> set[int]:
         if not self.allowed_user_ids.strip():
             return set()
-        return {int(uid.strip()) for uid in self.allowed_user_ids.split(",") if uid.strip()}
+        ids: set[int] = set()
+        for part in self.allowed_user_ids.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                ids.add(int(part))
+            except ValueError:
+                pass
+        return ids
 
 
 settings = Settings()

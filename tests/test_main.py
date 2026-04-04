@@ -61,6 +61,20 @@ class MainCliTests(unittest.TestCase):
         self.assertIn("1 user(s)", output)
         self.assertIn("openai/gpt-4", output)
 
+    def test_check_handles_malformed_user_ids(self) -> None:
+        stdout = io.StringIO()
+        with patch.object(main_module.settings, "telegram_bot_token", "fake-token"), \
+             patch.object(main_module.settings, "default_model", "test-model"), \
+             patch.object(main_module.settings, "default_tool_preset", "coding"), \
+             patch.object(main_module.settings, "allowed_user_ids", "42,abc,, "), \
+             redirect_stdout(stdout):
+            rc = main_module.main(["--check"])
+
+        self.assertEqual(rc, 0)
+        output = stdout.getvalue()
+        self.assertIn("1 user(s)", output)
+        self.assertIn("OK", output)
+
     def test_cli_override_working_dir(self) -> None:
         original = main_module.settings.working_dir
         try:
