@@ -10,8 +10,10 @@ from unittest.mock import AsyncMock, patch
 
 from ragtag_crew.config import settings
 from ragtag_crew.external import everything as everything_module
+from ragtag_crew.external import browser_agent as browser_module
 from ragtag_crew.external import manager as manager_module
 from ragtag_crew.external import mcp_client as mcp_module
+from ragtag_crew.external import web_search as web_search_module
 from ragtag_crew.tools import _ALL_TOOLS, get_tools_for_preset
 
 
@@ -65,6 +67,121 @@ class EverythingTests(unittest.TestCase):
         tool_names = [tool.name for tool in get_tools_for_preset("readonly")]
         self.assertTrue(status.ready)
         self.assertIn("everything_search", tool_names)
+
+
+class BrowserAgentTests(unittest.IsolatedAsyncioTestCase):
+    def tearDown(self) -> None:
+        for name in list(_ALL_TOOLS):
+            if name.startswith("browser_"):
+                _ALL_TOOLS.pop(name, None)
+        browser_module.disconnect_attached_browser()
+
+    def test_register_browser_tools_adds_snapshot_to_readonly(self) -> None:
+        with temp_setting("agent_browser_enabled", True), temp_setting(
+            "agent_browser_command", "agent-browser"
+        ), patch("ragtag_crew.external.browser_agent._command_available", return_value=True):
+            statuses = browser_module.register_browser_tools()
+
+        readonly_names = [tool.name for tool in get_tools_for_preset("readonly")]
+        self.assertIn("browser_snapshot", readonly_names)
+        self.assertEqual([status.key for status in statuses], ["browser-isolated", "browser-attached"])
+
+    def test_resolve_command_path_returns_real_executable(self) -> None:
+        with patch("ragtag_crew.external.browser_agent.shutil.which", return_value="C:/bin/agent-browser.cmd"):
+            resolved = browser_module._resolve_command_path("agent-browser")
+
+        self.assertEqual(resolved, "C:/bin/agent-browser.cmd")
+
+    def test_build_process_args_wraps_cmd_scripts(self) -> None:
+        process_args = browser_module._build_process_args(["C:/bin/agent-browser.cmd", "open", "https://example.com"])
+
+        self.assertEqual(process_args[:2], ["cmd.exe", "/c"])
+        self.assertEqual(process_args[2], "C:/bin/agent-browser.cmd")
+
+    async def test_browser_open_blocks_non_whitelisted_domain(self) -> None:
+        with temp_setting("browser_allowed_domains", "example.com"):
+            result = await browser_module._browser_open("https://not-allowed.test")
+
+        self.assertIn("outside the browser allowed domains policy", result)
+
+    async def test_browser_click_requires_attached_confirmation(self) -> None:
+        with temp_setting("browser_attached_require_confirmation", True), browser_module.browser_execution_context(
+            "attached", attached_confirmed=False
+        ):
+            result = await browser_module._browser_click("#submit")
+
+        self.assertIn("require explicit confirmation", result)
+
+    async def test_connect_attached_browser_marks_runtime_connected(self) -> None:
+        with temp_setting("agent_browser_enabled", True), temp_setting(
+            "browser_attached_enabled", True
+        ), temp_setting("browser_attached_auto_connect", True), patch(
+            "ragtag_crew.external.browser_agent._run_command",
+            new=AsyncMock(return_value="tab list"),
+        ):
+            ok, detail = await browser_module.connect_attached_browser()
+            state = browser_module.get_browser_runtime_state(session_mode="attached")
+
+        self.assertTrue(ok)
+        self.assertIn("Connected attached browser", detail)
+        self.assertTrue(state.attached_connected)
+
+    async def test_run_browser_smoke_test_executes_basic_flow(self) -> None:
+        side_effect = [
+            "OK",
+            browser_module._SMOKE_TEST_TITLE,
+            "button Continue",
+            "OK",
+        ]
+        with temp_setting("agent_browser_command", "agent-browser"), patch(
+            "ragtag_crew.external.browser_agent._command_available",
+            return_value=True,
+        ), patch(
+            "ragtag_crew.external.browser_agent._run_command",
+            new=AsyncMock(side_effect=side_effect),
+        ) as run_command:
+            ok, detail = await browser_module.run_browser_smoke_test()
+
+        self.assertTrue(ok)
+        self.assertIn("Browser smoke check passed.", detail)
+        self.assertEqual(run_command.await_count, 4)
+
+    async def test_run_browser_smoke_test_reports_missing_command(self) -> None:
+        with patch("ragtag_crew.external.browser_agent._command_available", return_value=False):
+            ok, detail = await browser_module.run_browser_smoke_test()
+
+        self.assertFalse(ok)
+        self.assertIn("command not found", detail)
+
+
+class WebSearchTests(unittest.TestCase):
+    def tearDown(self) -> None:
+        _ALL_TOOLS.pop("web_search", None)
+
+    def test_normalize_serper_results(self) -> None:
+        with temp_setting("web_search_provider", "serper"):
+            results = web_search_module._normalize_search_results(
+                {
+                    "organic": [
+                        {
+                            "title": "Example title",
+                            "link": "https://example.com/a",
+                            "snippet": "Example snippet",
+                        }
+                    ]
+                }
+            )
+
+        self.assertEqual(results[0].title, "Example title")
+        self.assertEqual(results[0].url, "https://example.com/a")
+
+    def test_register_web_search_tool_adds_tool_to_readonly_preset(self) -> None:
+        with temp_setting("web_search_enabled", True), temp_setting("web_search_provider", "serper"):
+            status = web_search_module.register_web_search_tool()
+
+        tool_names = [tool.name for tool in get_tools_for_preset("readonly")]
+        self.assertTrue(status.ready)
+        self.assertIn("web_search", tool_names)
 
 
 class MCPConfigTests(unittest.TestCase):
@@ -138,11 +255,30 @@ class ExternalManagerTests(unittest.IsolatedAsyncioTestCase):
     async def test_initialize_external_capabilities_combines_statuses(self) -> None:
         manager_module._initialized = False
         manager_module._capability_statuses = {}
+        web_status = manager_module.CapabilityStatus(
+            key="web-search",
+            kind="search",
+            ready=True,
+            tool_names=("web_search",),
+        )
         everything_status = manager_module.CapabilityStatus(
             key="everything",
             kind="platform",
             ready=True,
             tool_names=("everything_search",),
+        )
+        browser_isolated = manager_module.CapabilityStatus(
+            key="browser-isolated",
+            kind="browser",
+            ready=True,
+            tool_names=("browser_open",),
+        )
+        browser_attached = manager_module.CapabilityStatus(
+            key="browser-attached",
+            kind="browser",
+            ready=True,
+            detail="detached (auto-connect)",
+            tool_names=("browser_open",),
         )
         mcp_status = manager_module.CapabilityStatus(
             key="mcp:fs",
@@ -152,15 +288,24 @@ class ExternalManagerTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
+            "ragtag_crew.external.manager.register_web_search_tool",
+            return_value=web_status,
+        ), patch(
             "ragtag_crew.external.manager.register_everything_tool",
             return_value=everything_status,
+        ), patch(
+            "ragtag_crew.external.manager.register_browser_tools",
+            return_value=[browser_isolated, browser_attached],
         ), patch(
             "ragtag_crew.external.manager.discover_mcp_tools",
             new=AsyncMock(return_value=[mcp_status]),
         ):
             statuses = await manager_module.initialize_external_capabilities(force=True)
 
-        self.assertEqual([status.key for status in statuses], ["everything", "mcp:fs"])
+        self.assertEqual(
+            [status.key for status in statuses],
+            ["web-search", "everything", "browser-isolated", "browser-attached", "mcp:fs"],
+        )
         self.assertEqual([status.key for status in manager_module.get_mcp_statuses()], ["mcp:fs"])
 
 

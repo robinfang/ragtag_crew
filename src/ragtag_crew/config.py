@@ -36,10 +36,27 @@ class Settings(BaseSettings):
     session_summary_max_chars: int = 4000
     external_tool_timeout: int = 30
     mcp_servers_file: str = "mcp_servers.local.json"
+    web_search_enabled: bool = False
+    web_search_provider: str = "serper"
+    web_search_api_url: str = "https://google.serper.dev/search"
+    web_search_api_key: str = ""
+    web_search_timeout: int = 15
+    web_search_max_results: int = 5
     everything_enabled: bool = False
     everything_command: str = "es.exe"
     everything_timeout: int = 10
     everything_max_results: int = 50
+    agent_browser_enabled: bool = False
+    agent_browser_command: str = "agent-browser"
+    browser_mode_default: str = "isolated"
+    browser_profile_dir: str = "data/browser/isolated"
+    browser_default_timeout: int = 30
+    browser_headed: bool = True
+    browser_allowed_domains: str = ""
+    browser_attached_enabled: bool = False
+    browser_attached_require_confirmation: bool = True
+    browser_attached_cdp_url: str = ""
+    browser_attached_auto_connect: bool = False
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

@@ -10,6 +10,7 @@ data/sessions/
 USER.local.md
 memory/inbox.md
 mcp_servers.local.json
+data/browser/
 nul
 pi-telegram-agent/
 py-telegram-agent/

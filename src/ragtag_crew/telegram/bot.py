@@ -16,9 +16,17 @@ from telegram.ext import (
 
 from ragtag_crew.agent import AgentSession
 from ragtag_crew.config import settings
+from ragtag_crew.external.browser_agent import (
+    connect_attached_browser,
+    disconnect_attached_browser,
+    get_browser_runtime_state,
+)
 from ragtag_crew.external import (
     ensure_external_capabilities_initialized,
+    get_capability_statuses,
+    get_browser_statuses,
     get_mcp_statuses,
+    initialize_external_capabilities,
 )
 from ragtag_crew.memory_store import (
     append_memory_note,
@@ -63,6 +71,7 @@ def _get_session(chat_id: int) -> AgentSession:
                 system_prompt=_SYSTEM_PROMPT,
                 tool_preset=settings.default_tool_preset,
                 enabled_skills=[],
+                browser_mode=settings.browser_mode_default,
             )
     return _sessions[chat_id]
 
@@ -84,7 +93,7 @@ async def _cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         f"Model: {settings.default_model}\n"
         f"Tools: {settings.default_tool_preset}\n\n"
         "Send me a message to get started.\n"
-        "Commands: /new /model /tools /skills /skill /memory /context /mcp"
+        "Commands: /new /model /tools /skills /skill /memory /context /mcp /ext /browser"
     )
 
 
@@ -367,10 +376,189 @@ def _format_mcp_status_text() -> str:
     return "\n".join(lines)
 
 
+def _capability_state_text(status) -> str:  # type: ignore[no-untyped-def]
+    if status.ready:
+        return "ready"
+    if status.detail in {"disabled", "windows-only"}:
+        return "disabled"
+    return "error"
+
+
+def _format_capability_status_text() -> str:
+    statuses = get_capability_statuses()
+    if not statuses:
+        return "External capabilities not initialized yet."
+
+    lines = ["External capabilities:"]
+    for status in statuses:
+        lines.append(f"- {status.key}: {_capability_state_text(status)}")
+        lines.append(f"  kind: {status.kind}")
+        if status.detail:
+            lines.append(f"  detail: {status.detail}")
+        if status.tool_names:
+            lines.append(f"  tools: {', '.join(status.tool_names)}")
+    lines.append("")
+    lines.append("Usage: /ext show | /ext reload")
+    return "\n".join(lines)
+
+
+def _format_browser_status_text(session: AgentSession) -> str:
+    runtime = get_browser_runtime_state(session_mode=session.browser_mode)
+    statuses = {status.key: status for status in get_browser_statuses()}
+    isolated = statuses.get("browser-isolated")
+    attached = statuses.get("browser-attached")
+    isolated_state = _capability_state_text(isolated) if isolated else "unknown"
+    attached_state = _capability_state_text(attached) if attached else "unknown"
+    isolated_detail = isolated.detail if isolated else ""
+    attached_detail = attached.detail if attached else ""
+    if runtime.attached_target.startswith("http://") or runtime.attached_target.startswith("ws://") or runtime.attached_target.startswith("wss://"):
+        attached_path = "manual-cdp"
+        attached_target_text = runtime.attached_target
+        attached_connect_hint = "Run /browser connect to attach via the configured CDP URL."
+    elif runtime.attached_target == "auto-connect":
+        attached_path = "auto-connect"
+        attached_target_text = "discover a running Chrome/Edge automatically"
+        attached_connect_hint = "Run /browser connect to let agent-browser auto-discover Chrome/Edge."
+    else:
+        attached_path = "not-configured"
+        attached_target_text = "set BROWSER_ATTACHED_CDP_URL or enable BROWSER_ATTACHED_AUTO_CONNECT"
+        attached_connect_hint = "Configure a CDP URL for stable attach, or enable auto-connect for convenience."
+    return (
+        "Browser status:\n"
+        f"Session mode: {runtime.session_mode}\n"
+        f"Default mode: {runtime.default_mode}\n"
+        f"Command: {runtime.command}\n"
+        f"Attached confirmed: {'yes' if session.browser_attached_confirmed else 'no'}\n"
+        f"Allowed domains: {settings.browser_allowed_domains or '(all)'}\n"
+        f"Isolated: {isolated_state}\n"
+        f"  detail: {isolated_detail or f'profile={runtime.isolated_profile_dir}'}\n"
+        f"Attached: {attached_state}\n"
+        f"  path: {attached_path}\n"
+        f"  target: {attached_target_text}\n"
+        f"  detail: {attached_detail or runtime.attached_target}\n"
+        f"  connected: {'yes' if runtime.attached_connected else 'no'}\n\n"
+        f"Connect hint: {attached_connect_hint}\n"
+        "Manual CDP is steadier; auto-connect is more convenient but depends on local browser discovery.\n\n"
+        "Usage: /browser status | /browser mode isolated|attached | /browser confirm-attached | /browser revoke-attached | /browser connect | /browser disconnect"
+    )
+
+
+async def _cmd_ext(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_authorized(update.effective_user.id):
+        return
+
+    args = context.args or []
+    action = args[0].lower() if args else "show"
+    if action == "show":
+        await update.message.reply_text(_format_capability_status_text())
+        return
+
+    if action == "reload":
+        await initialize_external_capabilities(force=True)
+        await update.message.reply_text(
+            "External capabilities reloaded.\n\n" + _format_capability_status_text()
+        )
+        return
+
+    await update.message.reply_text("Usage: /ext show | /ext reload")
+
+
 async def _cmd_mcp(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_authorized(update.effective_user.id):
         return
+    args = context.args or []
+    if args and args[0].lower() == "reload":
+        await initialize_external_capabilities(force=True)
+        await update.message.reply_text("MCP capabilities reloaded.\n\n" + _format_mcp_status_text())
+        return
     await update.message.reply_text(_format_mcp_status_text())
+
+
+async def _cmd_browser(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_authorized(update.effective_user.id):
+        return
+
+    chat_id = update.effective_chat.id
+    session = _get_session(chat_id)
+    args = context.args or []
+    action = args[0].lower() if args else "status"
+
+    if action == "status":
+        await update.message.reply_text(_format_browser_status_text(session))
+        return
+
+    if action == "mode":
+        if len(args) < 2:
+            await update.message.reply_text(
+                "Usage: /browser mode isolated|attached"
+            )
+            return
+        mode = args[1].lower()
+        if mode not in {"isolated", "attached"}:
+            await update.message.reply_text("Usage: /browser mode isolated|attached")
+            return
+        if mode == "attached" and not settings.browser_attached_enabled:
+            await update.message.reply_text("Attached browser mode is disabled in configuration.")
+            return
+        if (
+            mode == "attached"
+            and settings.browser_attached_require_confirmation
+            and not session.browser_attached_confirmed
+        ):
+            await update.message.reply_text(
+                "Attached browser mode requires explicit confirmation first. "
+                "Run /browser confirm-attached before switching."
+            )
+            return
+        session.browser_mode = mode
+        save_session(chat_id, session)
+        await update.message.reply_text(
+            f"Browser mode switched to: {mode}\n\n" + _format_browser_status_text(session)
+        )
+        return
+
+    if action == "confirm-attached":
+        session.browser_attached_confirmed = True
+        save_session(chat_id, session)
+        await update.message.reply_text(
+            "Attached browser confirmed for this session.\n\n" + _format_browser_status_text(session)
+        )
+        return
+
+    if action == "revoke-attached":
+        session.browser_attached_confirmed = False
+        if session.browser_mode == "attached":
+            session.browser_mode = "isolated"
+        save_session(chat_id, session)
+        await update.message.reply_text(
+            "Attached browser confirmation revoked.\n\n" + _format_browser_status_text(session)
+        )
+        return
+
+    if action == "connect":
+        if settings.browser_attached_require_confirmation and not session.browser_attached_confirmed:
+            await update.message.reply_text(
+                "Attached browser connect requires explicit confirmation first. "
+                "Run /browser confirm-attached before connecting."
+            )
+            return
+        ok, detail = await connect_attached_browser()
+        await initialize_external_capabilities(force=True)
+        prefix = "Attached browser connected." if ok else "Attached browser connect failed."
+        await update.message.reply_text(
+            f"{prefix}\n{detail}\n\n" + _format_browser_status_text(session)
+        )
+        return
+
+    if action == "disconnect":
+        detail = disconnect_attached_browser()
+        await initialize_external_capabilities(force=True)
+        await update.message.reply_text(detail + "\n\n" + _format_browser_status_text(session))
+        return
+
+    await update.message.reply_text(
+        "Usage: /browser status | /browser mode isolated|attached | /browser confirm-attached | /browser revoke-attached | /browser connect | /browser disconnect"
+    )
 
 
 async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -429,6 +617,8 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("memory", _cmd_memory))
     app.add_handler(CommandHandler("context", _cmd_context))
     app.add_handler(CommandHandler("mcp", _cmd_mcp))
+    app.add_handler(CommandHandler("ext", _cmd_ext))
+    app.add_handler(CommandHandler("browser", _cmd_browser))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _handle_message))
 
     return app

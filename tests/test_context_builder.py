@@ -51,7 +51,8 @@ class ContextBuilderTests(unittest.TestCase):
         self.assertLess(prompt.index("## Project Context"), prompt.index("## User Context"))
         self.assertLess(prompt.index("## User Context"), prompt.index("## Long-term Memory Index"))
         self.assertLess(prompt.index("## Long-term Memory Index"), prompt.index("## Active Skills"))
-        self.assertLess(prompt.index("## Active Skills"), prompt.index("## Session Prompt"))
+        self.assertLess(prompt.index("## Active Skills"), prompt.index("## External Result Policy"))
+        self.assertLess(prompt.index("## External Result Policy"), prompt.index("## Session Prompt"))
         self.assertLess(prompt.index("## Session Prompt"), prompt.index("## Session Summary"))
 
     def test_build_system_prompt_skips_missing_optional_files(self) -> None:
@@ -60,7 +61,8 @@ class ContextBuilderTests(unittest.TestCase):
             with context_files(root):
                 prompt = build_system_prompt(base_system_prompt="base system")
 
-        self.assertEqual(prompt, "base system")
+        self.assertTrue(prompt.startswith("base system"))
+        self.assertIn("## External Result Policy", prompt)
 
 
 if __name__ == "__main__":

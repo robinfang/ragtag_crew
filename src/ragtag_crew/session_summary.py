@@ -67,12 +67,24 @@ def _summarize_message(message: dict[str, Any]) -> str:
         content = _clip_text(message.get("content", ""))
         if not content:
             return ""
+        tool_name = _clip_text(message.get("tool_name", ""), limit=80)
+        tool_source_type = _clip_text(message.get("tool_source_type", ""), limit=40)
+        tool_source_name = _clip_text(message.get("tool_source_name", ""), limit=80)
+        tool_label = _tool_label(tool_name, tool_source_type, tool_source_name)
+        external_refs = _extract_external_refs(message.get("content", ""))
         if content.startswith("ERROR:"):
-            return f"Tool error: {content}"
+            prefix = f"Tool error ({tool_label})" if tool_label else "Tool error"
+            return f"{prefix}: {content}"
         tool_call_id = message.get("tool_call_id")
         if tool_call_id:
-            return f"Tool result ({tool_call_id}): {content}"
-        return f"Tool result: {content}"
+            prefix = f"Tool result ({tool_call_id})"
+        else:
+            prefix = "Tool result"
+        if tool_label:
+            prefix += f" [{tool_label}]"
+        if external_refs:
+            return f"{prefix}: {content} | External refs: {external_refs}"
+        return f"{prefix}: {content}"
 
     return ""
 
@@ -84,6 +96,25 @@ def _tool_name(tool_call: dict[str, Any]) -> str:
         return name
     name = tool_call.get("name")
     return name if isinstance(name, str) else ""
+
+
+def _tool_label(tool_name: str, source_type: str, source_name: str) -> str:
+    parts = [part for part in [tool_name, source_type, source_name] if part]
+    return "/".join(parts)
+
+
+def _extract_external_refs(value: Any, limit: int = 3) -> str:
+    if not isinstance(value, str) or not value:
+        return ""
+    urls: list[str] = []
+    for token in value.split():
+        if token.startswith("http://") or token.startswith("https://"):
+            cleaned = token.rstrip(",.;)]}\"'")
+            if cleaned not in urls:
+                urls.append(cleaned)
+        if len(urls) >= limit:
+            break
+    return ", ".join(urls)
 
 
 def _clip_text(value: Any, limit: int = 220) -> str:

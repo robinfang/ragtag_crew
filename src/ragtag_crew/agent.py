@@ -15,6 +15,7 @@ from typing import Any, Callable, Awaitable
 from ragtag_crew.config import settings
 from ragtag_crew.context_builder import build_system_prompt
 from ragtag_crew.errors import LLMChunkTimeoutError, LLMTimeoutError, TurnTimeoutError
+from ragtag_crew.external.browser_agent import browser_execution_context
 from ragtag_crew.llm import stream_chat, LLMResponse, ToolCall
 from ragtag_crew.session_summary import compact_history
 from ragtag_crew.tools import Tool, build_tool_schemas, get_tool
@@ -52,6 +53,8 @@ class AgentSession:
         session_summary: str = "",
         summary_updated_at: float | None = None,
         recent_message_count: int = 0,
+        browser_mode: str = "isolated",
+        browser_attached_confirmed: bool = False,
     ):
         self.model = model
         self.tools = tools
@@ -62,6 +65,8 @@ class AgentSession:
         self.session_summary = session_summary
         self.summary_updated_at = summary_updated_at
         self.recent_message_count = recent_message_count
+        self.browser_mode = browser_mode
+        self.browser_attached_confirmed = browser_attached_confirmed
         self.messages: list[dict[str, Any]] = []
 
         self._callbacks: list[EventCallback] = []
@@ -102,6 +107,7 @@ class AgentSession:
         self.session_summary = ""
         self.summary_updated_at = None
         self.recent_message_count = 0
+        self.browser_attached_confirmed = False
 
     def compact(self, *, force: bool = False) -> bool:
         """Compact older history into ``session_summary``.
@@ -154,74 +160,6 @@ class AgentSession:
             await self._emit("agent_end", content=final_content)
 
         return final_content
-
-    async def _run_loop(self) -> str:
-        tool_schemas = build_tool_schemas(self.tools) if self.tools else None
-        last_content = ""
-
-        for turn in range(1, settings.max_turns + 1):
-            if self._abort_event.is_set():
-                break
-
-            await self._emit("turn_start", turn=turn)
-            await self._emit("message_start")
-
-            # Stream LLM call
-            try:
-                response: LLMResponse = await stream_chat(
-                    model=self.model,
-                    messages=self._build_messages(),
-                    tools=tool_schemas,
-                    on_delta=self._on_text_delta,
-                    should_abort=self._abort_event.is_set,
-                )
-            except (LLMTimeoutError, LLMChunkTimeoutError) as exc:
-                response = exc.partial_response or LLMResponse()
-                await self._emit("message_end", content=response.content)
-                self._append_assistant_message(response)
-                last_content = response.content
-                raise
-
-            await self._emit("message_end", content=response.content)
-
-            self._append_assistant_message(response)
-
-            last_content = response.content
-
-            # If abort was requested during streaming, keep the partial text
-            # that already arrived, but do not continue with tool execution.
-            if self._abort_event.is_set():
-                await self._emit("turn_end", turn=turn)
-                break
-
-            # No tool calls → done
-            if not response.tool_calls:
-                await self._emit("turn_end", turn=turn)
-                break
-
-            # Execute each tool call
-            for tc in response.tool_calls:
-                if self._abort_event.is_set():
-                    break
-
-                await self._emit("tool_execution_start", tool_call=tc)
-                result = await self._execute_tool(tc)
-                await self._emit("tool_execution_end", tool_call=tc, result=result)
-
-                self.messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": result,
-                    }
-                )
-
-            await self._emit("turn_end", turn=turn)
-        else:
-            # Exceeded max_turns
-            log.warning("Agent loop hit max_turns (%d)", settings.max_turns)
-
-        return last_content
 
     async def _on_text_delta(self, delta: str) -> None:
         await self._emit("message_update", delta=delta)
@@ -288,7 +226,77 @@ class AgentSession:
         except KeyError:
             return f"ERROR: unknown tool '{tc.name}'"
         try:
-            return await tool.execute(**tc.arguments)
+            with browser_execution_context(
+                self.browser_mode,
+                attached_confirmed=self.browser_attached_confirmed,
+            ):
+                return await tool.execute(**tc.arguments)
         except Exception as exc:
             log.exception("Tool %s execution failed", tc.name)
             return f"ERROR: {type(exc).__name__}: {exc}"
+
+    async def _run_loop(self) -> str:
+        tool_schemas = build_tool_schemas(self.tools) if self.tools else None
+        last_content = ""
+
+        for turn in range(1, settings.max_turns + 1):
+            if self._abort_event.is_set():
+                break
+
+            await self._emit("turn_start", turn=turn)
+            await self._emit("message_start")
+
+            try:
+                response: LLMResponse = await stream_chat(
+                    model=self.model,
+                    messages=self._build_messages(),
+                    tools=tool_schemas,
+                    on_delta=self._on_text_delta,
+                    should_abort=self._abort_event.is_set,
+                )
+            except (LLMTimeoutError, LLMChunkTimeoutError) as exc:
+                response = exc.partial_response or LLMResponse()
+                await self._emit("message_end", content=response.content)
+                self._append_assistant_message(response)
+                last_content = response.content
+                raise
+
+            await self._emit("message_end", content=response.content)
+
+            self._append_assistant_message(response)
+
+            last_content = response.content
+
+            if self._abort_event.is_set():
+                await self._emit("turn_end", turn=turn)
+                break
+
+            if not response.tool_calls:
+                await self._emit("turn_end", turn=turn)
+                break
+
+            for tc in response.tool_calls:
+                if self._abort_event.is_set():
+                    break
+
+                await self._emit("tool_execution_start", tool_call=tc)
+                result = await self._execute_tool(tc)
+                await self._emit("tool_execution_end", tool_call=tc, result=result)
+
+                tool_meta = get_tool(tc.name)
+                self.messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "tool_name": tc.name,
+                        "tool_source_type": tool_meta.source_type,
+                        "tool_source_name": tool_meta.source_name,
+                        "content": result,
+                    }
+                )
+
+            await self._emit("turn_end", turn=turn)
+        else:
+            log.warning("Agent loop hit max_turns (%d)", settings.max_turns)
+
+        return last_content

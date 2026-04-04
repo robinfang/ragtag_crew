@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 
 from ragtag_crew.external.base import CapabilityStatus
+from ragtag_crew.external.browser_agent import register_browser_tools
 from ragtag_crew.external.everything import register_everything_tool
 from ragtag_crew.external.mcp_client import discover_mcp_tools
+from ragtag_crew.external.web_search import register_web_search_tool
 
 _capability_statuses: dict[str, CapabilityStatus] = {}
 _initialized = False
@@ -26,12 +28,17 @@ def get_mcp_statuses() -> list[CapabilityStatus]:
     return [status for status in get_capability_statuses() if status.kind == "mcp"]
 
 
+def get_browser_statuses() -> list[CapabilityStatus]:
+    return [status for status in get_capability_statuses() if status.kind == "browser"]
+
+
 async def initialize_external_capabilities(*, force: bool = False) -> list[CapabilityStatus]:
     global _initialized
     if _initialized and not force:
         return get_capability_statuses()
 
-    statuses = [register_everything_tool()]
+    statuses = [register_web_search_tool(), register_everything_tool()]
+    statuses.extend(register_browser_tools())
     statuses.extend(await discover_mcp_tools())
     _initialized = True
     return _store_statuses(statuses)

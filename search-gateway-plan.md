@@ -56,15 +56,24 @@
 
 ## 4. 推荐接口形态
 
-推荐顺序不是“先 MCP 后 OpenAPI”，而是：
+对于当前这套“自己给自己的生态”，推荐顺序改为：
 
-`search core -> OpenAPI -> MCP adapter`
+`search core -> OpenAPI -> ragtag_crew`
+
+不是：
+
+`search core -> OpenAPI -> MCP adapter -> ragtag_crew`
 
 原因：
 
 - `OpenAPI` 更容易调试、版本化、观测和做错误归因
-- `MCP` 更适合做 agent 工具暴露层，而不是最底层业务协议
-- 未来 `ragtag_crew` 本体也能优先消费固定 `OpenAPI`，再按需要接 MCP 适配器
+- 当前主要消费者就是 `ragtag_crew`，先包一层 `MCP adapter` 只会增加协议转换和排障成本
+- 搜索网关本身更像一个内部基础服务，优先保持 HTTP 接口清晰，比优先做 agent 生态适配更重要
+
+补充说明：
+
+- 以后如果真的出现第二套 agent 生态、第三方客户端，或者需要把搜索能力以 MCP 工具形式对外提供，再单独补 `MCP adapter` 也不迟
+- 但这不应成为当前第一版 gateway 的前置要求
 
 ## 5. 对 `ragtag_crew` 的直接要求
 
@@ -73,7 +82,7 @@
 1. 工具系统允许多个来源并存
 2. 搜索工具只是工具来源的一种，而不是特殊硬编码分支
 3. Windows `Everything` 被当作平台适配器，不混入通用 shell
-4. 将来接 gateway 时，最好只需要新增一个 provider，而不是重写 agent loop
+4. 将来接 gateway 时，最好只需要新增一个固定 `OpenAPI` provider，而不是重写 agent loop
 
 ## 6. 当前阶段建议
 
@@ -94,6 +103,7 @@
 - 搜索缓存层
 - 搜索审计后台
 - 动态 `OpenAPI spec` 导入
+- 搜索 gateway 的 `MCP adapter`
 - 自动把搜索结果写入长期记忆
 
 第一版只做：
@@ -101,6 +111,7 @@
 - 本项目内的基础搜索能力继续可用
 - `Everything` 能作为 Windows 搜索工具挂到工具系统里
 - `MCP client` 能把外部工具纳入统一工具系统
+- 未来独立 search gateway 的第一版优先提供稳定 `OpenAPI`，由 `ragtag_crew` 直接接入
 
 ## 8. 与上下文系统的关系
 
@@ -118,5 +129,6 @@
 - 内置一个基础可用搜索层
 - 规划一个独立 search gateway / portal
 - 用统一工具系统同时承接本地工具、平台适配器、MCP 工具、未来固定 OpenAPI 工具
+- 当 search gateway 开始落地时，默认路线是 `ragtag_crew` 直连其 `OpenAPI`，而不是先做 `MCP adapter`
 
 这就是当前阶段 1 的架构落点。

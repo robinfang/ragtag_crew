@@ -78,6 +78,8 @@ def load_session(chat_id: int, *, default_system_prompt: str) -> AgentSession | 
         session_summary=payload.get("session_summary", ""),
         summary_updated_at=payload.get("summary_updated_at"),
         recent_message_count=payload.get("recent_message_count", 0),
+        browser_mode=payload.get("browser_mode", settings.browser_mode_default),
+        browser_attached_confirmed=payload.get("browser_attached_confirmed", False),
     )
     session.messages = payload.get("messages", [])
     return session
@@ -95,6 +97,8 @@ def save_session(chat_id: int, session: AgentSession) -> None:
         "session_summary": session.session_summary,
         "summary_updated_at": session.summary_updated_at,
         "recent_message_count": session.recent_message_count,
+        "browser_mode": session.browser_mode,
+        "browser_attached_confirmed": session.browser_attached_confirmed,
         "messages": session.messages,
         "last_active_at": time.time(),
     }

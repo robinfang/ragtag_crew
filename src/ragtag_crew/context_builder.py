@@ -58,6 +58,16 @@ def build_system_prompt(
         skill_prompt = render_skill_prompt(enabled_skills)
         _append_section(parts, "Active Skills", skill_prompt)
 
+    _append_section(
+        parts,
+        "External Result Policy",
+        (
+            "Treat search, MCP, platform, and API tool results as working evidence rather than permanent truth. "
+            "Prefer citing concrete URLs, file paths, and tool names in your reasoning. "
+            "Only promote stable conclusions into memory when the user asks or when the information is clearly long-lived project knowledge."
+        ),
+    )
+
     _append_section(parts, "Session Prompt", session_prompt)
     _append_section(parts, "Session Summary", session_summary)
     return "\n\n".join(parts).strip()

@@ -72,6 +72,8 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("/memory", reply)
         self.assertIn("/context", reply)
         self.assertIn("/mcp", reply)
+        self.assertIn("/ext", reply)
+        self.assertIn("/browser", reply)
 
     async def test_cmd_start_ignores_unauthorized_user(self) -> None:
         update = FakeUpdate(user_id=99)
@@ -382,6 +384,272 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("mcp:filesystem", reply)
         self.assertIn("mcp_fs_read_file", reply)
 
+    async def test_cmd_mcp_reload_forces_refresh(self) -> None:
+        update = FakeUpdate(chat_id=100)
+        statuses = [
+            SimpleNamespace(
+                key="mcp:filesystem",
+                ready=True,
+                detail="command=npx",
+                tool_names=("mcp_fs_read_file",),
+            )
+        ]
+
+        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
+            "ragtag_crew.telegram.bot.initialize_external_capabilities",
+            new=AsyncMock(return_value=statuses),
+        ) as reload_caps, patch(
+            "ragtag_crew.telegram.bot.get_mcp_statuses",
+            return_value=statuses,
+        ):
+            await bot_module._cmd_mcp(update, FakeContext(["reload"]))
+
+        reload_caps.assert_awaited_once_with(force=True)
+        self.assertIn("MCP capabilities reloaded.", update.message.reply_calls[0]["text"])
+
+    async def test_cmd_ext_show_lists_all_capabilities(self) -> None:
+        update = FakeUpdate(chat_id=100)
+        statuses = [
+            SimpleNamespace(
+                key="web-search",
+                kind="search",
+                ready=True,
+                detail="provider=serper",
+                tool_names=("web_search",),
+            ),
+            SimpleNamespace(
+                key="everything",
+                kind="platform",
+                ready=False,
+                detail="windows-only",
+                tool_names=(),
+            ),
+        ]
+
+        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
+            "ragtag_crew.telegram.bot.get_capability_statuses",
+            return_value=statuses,
+        ):
+            await bot_module._cmd_ext(update, FakeContext())
+
+        reply = update.message.reply_calls[0]["text"]
+        self.assertIn("External capabilities:", reply)
+        self.assertIn("web-search: ready", reply)
+        self.assertIn("everything: disabled", reply)
+        self.assertIn("Usage: /ext show | /ext reload", reply)
+
+    async def test_cmd_ext_reload_forces_refresh(self) -> None:
+        update = FakeUpdate(chat_id=100)
+        statuses = [
+            SimpleNamespace(
+                key="web-search",
+                kind="search",
+                ready=True,
+                detail="provider=serper",
+                tool_names=("web_search",),
+            )
+        ]
+
+        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
+            "ragtag_crew.telegram.bot.initialize_external_capabilities",
+            new=AsyncMock(return_value=statuses),
+        ) as reload_caps, patch(
+            "ragtag_crew.telegram.bot.get_capability_statuses",
+            return_value=statuses,
+        ):
+            await bot_module._cmd_ext(update, FakeContext(["reload"]))
+
+        reload_caps.assert_awaited_once_with(force=True)
+        self.assertIn("External capabilities reloaded.", update.message.reply_calls[0]["text"])
+
+    async def test_cmd_browser_status_shows_mode_and_connection(self) -> None:
+        session = SimpleNamespace(browser_mode="isolated", browser_attached_confirmed=False)
+        bot_module._sessions[100] = session
+        update = FakeUpdate(chat_id=100)
+        browser_statuses = [
+            SimpleNamespace(key="browser-isolated", kind="browser", ready=True, detail="profile=data/browser/isolated", tool_names=("browser_open",)),
+            SimpleNamespace(key="browser-attached", kind="browser", ready=True, detail="detached (auto-connect)", tool_names=("browser_open",)),
+        ]
+        runtime = SimpleNamespace(
+            session_mode="isolated",
+            default_mode="isolated",
+            command="agent-browser",
+            isolated_profile_dir="data/browser/isolated",
+            attached_target="auto-connect",
+            attached_connected=False,
+        )
+
+        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
+            "ragtag_crew.telegram.bot.get_browser_statuses", return_value=browser_statuses
+        ), patch("ragtag_crew.telegram.bot.get_browser_runtime_state", return_value=runtime):
+            await bot_module._cmd_browser(update, FakeContext())
+
+        reply = update.message.reply_calls[0]["text"]
+        self.assertIn("Browser status:", reply)
+        self.assertIn("Session mode: isolated", reply)
+        self.assertIn("Attached: ready", reply)
+        self.assertIn("Attached confirmed: no", reply)
+        self.assertIn("path: auto-connect", reply)
+        self.assertIn("Connect hint:", reply)
+
+    async def test_cmd_browser_mode_updates_session(self) -> None:
+        session = SimpleNamespace(browser_mode="isolated", browser_attached_confirmed=True)
+        bot_module._sessions[100] = session
+        update = FakeUpdate(chat_id=100)
+        browser_statuses = [
+            SimpleNamespace(key="browser-isolated", kind="browser", ready=True, detail="profile=x", tool_names=()),
+            SimpleNamespace(key="browser-attached", kind="browser", ready=True, detail="detached (auto-connect)", tool_names=()),
+        ]
+        runtime = SimpleNamespace(
+            session_mode="attached",
+            default_mode="isolated",
+            command="agent-browser",
+            isolated_profile_dir="data/browser/isolated",
+            attached_target="auto-connect",
+            attached_connected=False,
+        )
+
+        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
+            "ragtag_crew.telegram.bot.get_browser_statuses", return_value=browser_statuses
+        ), patch("ragtag_crew.telegram.bot.get_browser_runtime_state", return_value=runtime), patch(
+            "ragtag_crew.telegram.bot.save_session"
+        ) as save_session, patch.object(bot_module.settings, "browser_attached_enabled", True):
+            await bot_module._cmd_browser(update, FakeContext(["mode", "attached"]))
+
+        self.assertEqual(session.browser_mode, "attached")
+        save_session.assert_called_once_with(100, session)
+        self.assertIn("Browser mode switched to: attached", update.message.reply_calls[0]["text"])
+
+    async def test_cmd_browser_mode_attached_requires_confirmation(self) -> None:
+        session = SimpleNamespace(browser_mode="isolated", browser_attached_confirmed=False)
+        bot_module._sessions[100] = session
+        update = FakeUpdate(chat_id=100)
+
+        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch.object(
+            bot_module.settings, "browser_attached_enabled", True
+        ), patch.object(bot_module.settings, "browser_attached_require_confirmation", True), patch(
+            "ragtag_crew.telegram.bot.save_session"
+        ) as save_session:
+            await bot_module._cmd_browser(update, FakeContext(["mode", "attached"]))
+
+        save_session.assert_not_called()
+        self.assertIn("requires explicit confirmation first", update.message.reply_calls[0]["text"])
+
+    async def test_cmd_browser_confirm_attached_updates_session(self) -> None:
+        session = SimpleNamespace(browser_mode="isolated", browser_attached_confirmed=False)
+        bot_module._sessions[100] = session
+        update = FakeUpdate(chat_id=100)
+        browser_statuses = []
+        runtime = SimpleNamespace(
+            session_mode="isolated",
+            default_mode="isolated",
+            command="agent-browser",
+            isolated_profile_dir="data/browser/isolated",
+            attached_target="auto-connect",
+            attached_connected=False,
+        )
+
+        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
+            "ragtag_crew.telegram.bot.get_browser_statuses", return_value=browser_statuses
+        ), patch("ragtag_crew.telegram.bot.get_browser_runtime_state", return_value=runtime), patch(
+            "ragtag_crew.telegram.bot.save_session"
+        ) as save_session:
+            await bot_module._cmd_browser(update, FakeContext(["confirm-attached"]))
+
+        self.assertTrue(session.browser_attached_confirmed)
+        save_session.assert_called_once_with(100, session)
+        self.assertIn("Attached browser confirmed", update.message.reply_calls[0]["text"])
+
+    async def test_cmd_browser_status_shows_manual_cdp_path(self) -> None:
+        session = SimpleNamespace(browser_mode="attached", browser_attached_confirmed=True)
+        bot_module._sessions[100] = session
+        update = FakeUpdate(chat_id=100)
+        browser_statuses = [
+            SimpleNamespace(key="browser-isolated", kind="browser", ready=True, detail="profile=data/browser/isolated", tool_names=("browser_open",)),
+            SimpleNamespace(key="browser-attached", kind="browser", ready=True, detail="detached (http://127.0.0.1:9222)", tool_names=("browser_open",)),
+        ]
+        runtime = SimpleNamespace(
+            session_mode="attached",
+            default_mode="isolated",
+            command="agent-browser",
+            isolated_profile_dir="data/browser/isolated",
+            attached_target="http://127.0.0.1:9222",
+            attached_connected=False,
+        )
+
+        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
+            "ragtag_crew.telegram.bot.get_browser_statuses", return_value=browser_statuses
+        ), patch("ragtag_crew.telegram.bot.get_browser_runtime_state", return_value=runtime):
+            await bot_module._cmd_browser(update, FakeContext())
+
+        reply = update.message.reply_calls[0]["text"]
+        self.assertIn("path: manual-cdp", reply)
+        self.assertIn("target: http://127.0.0.1:9222", reply)
+        self.assertIn("attach via the configured CDP URL", reply)
+
+    async def test_cmd_browser_connect_reloads_external_state(self) -> None:
+        session = SimpleNamespace(browser_mode="attached", browser_attached_confirmed=True)
+        bot_module._sessions[100] = session
+        update = FakeUpdate(chat_id=100)
+        browser_statuses = [
+            SimpleNamespace(key="browser-isolated", kind="browser", ready=True, detail="profile=x", tool_names=()),
+            SimpleNamespace(key="browser-attached", kind="browser", ready=True, detail="connected via auto-connect", tool_names=()),
+        ]
+        runtime = SimpleNamespace(
+            session_mode="attached",
+            default_mode="isolated",
+            command="agent-browser",
+            isolated_profile_dir="data/browser/isolated",
+            attached_target="auto-connect",
+            attached_connected=True,
+        )
+
+        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
+            "ragtag_crew.telegram.bot.connect_attached_browser",
+            new=AsyncMock(return_value=(True, "Connected attached browser via auto-connect.")),
+        ) as connect_browser, patch(
+            "ragtag_crew.telegram.bot.initialize_external_capabilities",
+            new=AsyncMock(return_value=[]),
+        ) as init_caps, patch(
+            "ragtag_crew.telegram.bot.get_browser_statuses", return_value=browser_statuses
+        ), patch("ragtag_crew.telegram.bot.get_browser_runtime_state", return_value=runtime):
+            await bot_module._cmd_browser(update, FakeContext(["connect"]))
+
+        connect_browser.assert_awaited_once()
+        init_caps.assert_awaited_once_with(force=True)
+        self.assertIn("Attached browser connected.", update.message.reply_calls[0]["text"])
+
+    async def test_cmd_browser_disconnect_reloads_external_state(self) -> None:
+        session = SimpleNamespace(browser_mode="attached", browser_attached_confirmed=True)
+        bot_module._sessions[100] = session
+        update = FakeUpdate(chat_id=100)
+        browser_statuses = [
+            SimpleNamespace(key="browser-isolated", kind="browser", ready=True, detail="profile=x", tool_names=()),
+            SimpleNamespace(key="browser-attached", kind="browser", ready=True, detail="detached (auto-connect)", tool_names=()),
+        ]
+        runtime = SimpleNamespace(
+            session_mode="attached",
+            default_mode="isolated",
+            command="agent-browser",
+            isolated_profile_dir="data/browser/isolated",
+            attached_target="auto-connect",
+            attached_connected=False,
+        )
+
+        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
+            "ragtag_crew.telegram.bot.disconnect_attached_browser", return_value="Detached from current browser."
+        ) as disconnect_browser, patch(
+            "ragtag_crew.telegram.bot.initialize_external_capabilities",
+            new=AsyncMock(return_value=[]),
+        ) as init_caps, patch(
+            "ragtag_crew.telegram.bot.get_browser_statuses", return_value=browser_statuses
+        ), patch("ragtag_crew.telegram.bot.get_browser_runtime_state", return_value=runtime):
+            await bot_module._cmd_browser(update, FakeContext(["disconnect"]))
+
+        disconnect_browser.assert_called_once()
+        init_caps.assert_awaited_once_with(force=True)
+        self.assertIn("Detached from current browser.", update.message.reply_calls[0]["text"])
+
     async def test_handle_message_busy_session_is_rejected(self) -> None:
         session = SimpleNamespace(is_busy=True)
         bot_module._sessions[100] = session
@@ -467,7 +735,7 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
 
         cleanup.assert_called_once()
         init_external.assert_called_once()
-        self.assertEqual(len(added_handlers), 10)
+        self.assertEqual(len(added_handlers), 12)
         self.assertIsNotNone(app)
 
 

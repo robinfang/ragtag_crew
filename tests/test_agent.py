@@ -82,6 +82,31 @@ class AgentSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.recent_message_count, 2)
         self.assertIsNotNone(session.summary_updated_at)
 
+    def test_compact_summary_keeps_external_tool_metadata(self) -> None:
+        session = AgentSession(
+            model="openai/GLM-5.1",
+            tools=[Tool("noop", "noop", {"type": "object"}, _noop_tool)],
+        )
+        session.messages = [
+            {
+                "role": "tool",
+                "tool_call_id": "call_search",
+                "tool_name": "web_search",
+                "tool_source_type": "search",
+                "tool_source_name": "serper",
+                "content": "Result URL: https://example.com/article Snippet: useful context",
+            },
+            {"role": "assistant", "content": "done"},
+            {"role": "user", "content": "next"},
+        ]
+
+        with patch("ragtag_crew.agent.settings.session_summary_recent_messages", 2):
+            changed = session.compact(force=True)
+
+        self.assertTrue(changed)
+        self.assertIn("web_search/search/serper", session.session_summary)
+        self.assertIn("https://example.com/article", session.session_summary)
+
     async def test_prompt_merges_existing_summary_when_compacting_again(self) -> None:
         session = AgentSession(
             model="openai/GLM-5.1",
