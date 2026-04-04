@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
-from telegram import Update
+from telegram import BotCommand, Update
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -96,6 +96,24 @@ def _is_authorized(user_id: int) -> bool:
     return user_id in allowed
 
 
+# -- bot command menu --------------------------------------------------------
+
+_BOT_COMMANDS = [
+    BotCommand("new", "清空当前会话"),
+    BotCommand("model", "查看 / 切换模型"),
+    BotCommand("tools", "查看 / 切换工具预设"),
+    BotCommand("skills", "列出可用技能"),
+    BotCommand("skill", "启用 / 禁用技能"),
+    BotCommand("memory", "记忆管理"),
+    BotCommand("context", "查看 / 压缩上下文"),
+    BotCommand("mcp", "MCP 服务器状态"),
+    BotCommand("ext", "外部能力状态"),
+    BotCommand("browser", "浏览器控制"),
+]
+
+_REGISTERED_COMMAND_NAMES = frozenset(c.command for c in _BOT_COMMANDS)
+
+
 # -- handlers ---------------------------------------------------------------
 
 async def _cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -108,7 +126,7 @@ async def _cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         f"Model: {settings.default_model}\n"
         f"Tools: {settings.default_tool_preset}\n\n"
         "Send me a message to get started.\n"
-        "Commands: /new /model /tools /skills /skill /memory /context /mcp /ext /browser"
+        "输入 / 查看所有可用命令。"
     )
 
 
@@ -653,6 +671,11 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 # -- application builder ---------------------------------------------------
 
+async def _register_commands(app: Application) -> None:
+    await app.bot.set_my_commands(_BOT_COMMANDS)
+    log.info("bot command menu registered (%d commands)", len(_BOT_COMMANDS))
+
+
 def build_app() -> Application:
     """Construct the python-telegram-bot Application."""
     # Force-import tool modules so they self-register.
@@ -677,5 +700,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("ext", _cmd_ext))
     app.add_handler(CommandHandler("browser", _cmd_browser))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _handle_message))
+
+    app.post_init = _register_commands
 
     return app
