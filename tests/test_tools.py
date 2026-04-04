@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from ragtag_crew.config import settings
 from ragtag_crew.tools import Tool, _ALL_TOOLS, get_tools_for_preset, register_tool
-from ragtag_crew.tools.path_utils import resolve_path
+from ragtag_crew.tools.path_utils import resolve_path, resolve_read_path
 
 import ragtag_crew.tools.file_tools  # noqa: F401
 import ragtag_crew.tools.search_tools as search_tools
@@ -47,6 +47,38 @@ class PathSandboxTests(unittest.TestCase):
             with working_dir(base):
                 with self.assertRaises(PermissionError):
                     resolve_path("../work-evil/secrets.txt")
+
+    def test_resolve_read_path_allows_absolute_outside_working_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp) / "work"
+            outside = Path(tmp) / "other"
+            base.mkdir()
+            outside.mkdir()
+
+            with working_dir(base):
+                resolved = resolve_read_path(str(outside / "file.txt"))
+                self.assertEqual(resolved, outside / "file.txt")
+
+    def test_resolve_read_path_anchors_relative_to_working_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            inner = root / "nested" / "file.txt"
+
+            with working_dir(root):
+                resolved = resolve_read_path("nested/file.txt")
+
+            self.assertEqual(resolved, inner)
+
+    def test_resolve_path_still_blocks_absolute_outside(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp) / "work"
+            outside = Path(tmp) / "other"
+            base.mkdir()
+            outside.mkdir()
+
+            with working_dir(base):
+                with self.assertRaises(PermissionError):
+                    resolve_path(str(outside / "secrets.txt"))
 
 
 class ToolPresetTests(unittest.TestCase):

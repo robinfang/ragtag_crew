@@ -13,7 +13,7 @@ import shutil
 from pathlib import Path
 
 from ragtag_crew.tools import Tool, register_tool
-from ragtag_crew.tools.path_utils import display_path, resolve_path
+from ragtag_crew.tools.path_utils import display_path, resolve_read_path
 
 _MAX_OUTPUT = 50_000
 _SKIP_DIRS = {".git", ".venv", "__pycache__", "node_modules"}
@@ -48,26 +48,29 @@ def _get_rg_path() -> str | None:
     return None
 
 
-async def _grep_search(pattern: str, path: str = ".", include: str = "*") -> str:
-    root = resolve_path(path)
+async def _grep_search(pattern: str, path: str = ".", include: str = "*", case_insensitive: bool = True) -> str:
+    root = resolve_read_path(path)
     if not root.exists():
         return f"ERROR: path not found: {path}"
 
-    rg_result = await _grep_with_rg(pattern=pattern, root=root, include=include)
+    rg_result = await _grep_with_rg(pattern=pattern, root=root, include=include, case_insensitive=case_insensitive)
     if rg_result is not None:
         return rg_result
 
-    return await _grep_with_python(pattern=pattern, root=root, include=include)
+    return await _grep_with_python(pattern=pattern, root=root, include=include, case_insensitive=case_insensitive)
 
 
-async def _grep_with_rg(pattern: str, root: Path, include: str) -> str | None:
+async def _grep_with_rg(pattern: str, root: Path, include: str, case_insensitive: bool = True) -> str | None:
     rg_path = _get_rg_path()
     if rg_path is None:
         return None
 
-    command = [rg_path, "--line-number", "--with-filename", pattern, str(root)]
+    command = [rg_path, "--line-number", "--with-filename"]
+    if case_insensitive:
+        command.append("-i")
     if include and include != "*":
-        command[1:1] = ["--glob", include]
+        command.extend(["--glob", include])
+    command.extend([pattern, str(root)])
 
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -93,9 +96,9 @@ async def _grep_with_rg(pattern: str, root: Path, include: str) -> str | None:
     return _truncate(output) if output else "No matches found."
 
 
-async def _grep_with_python(pattern: str, root: Path, include: str) -> str:
+async def _grep_with_python(pattern: str, root: Path, include: str, case_insensitive: bool = True) -> str:
     try:
-        regex = re.compile(pattern)
+        regex = re.compile(pattern, re.IGNORECASE if case_insensitive else 0)
     except re.error as exc:
         return f"ERROR: invalid regex: {exc}"
 
@@ -123,7 +126,7 @@ async def _grep_with_python(pattern: str, root: Path, include: str) -> str:
 
 
 async def _find_files(pattern: str = "*", path: str = ".") -> str:
-    root = resolve_path(path)
+    root = resolve_read_path(path)
     if not root.exists():
         return f"ERROR: path not found: {path}"
 
@@ -184,7 +187,7 @@ async def _find_with_python(pattern: str, root: Path) -> str:
 
 
 async def _list_dir(path: str = ".") -> str:
-    target = resolve_path(path)
+    target = resolve_read_path(path)
     if not target.exists():
         return f"ERROR: path not found: {path}"
 
@@ -204,13 +207,18 @@ async def _list_dir(path: str = ".") -> str:
 grep_tool = register_tool(
     Tool(
         name="grep",
-        description="Search file contents with a regex pattern.",
+        description=(
+            "Search file contents using regex. Use this instead of `bash grep`. "
+            "Supports ripgrep internally for fast search. "
+            "Returns file paths with line numbers and matching lines."
+        ),
         parameters={
             "type": "object",
             "properties": {
                 "pattern": {"type": "string", "description": "Regex pattern to search for"},
-                "path": {"type": "string", "description": "Directory or file path", "default": "."},
-                "include": {"type": "string", "description": "Glob filter such as *.py", "default": "*"},
+                "path": {"type": "string", "description": "Directory or file path (relative to working dir or absolute)", "default": "."},
+                "include": {"type": "string", "description": "File filter, e.g. *.py, *.{ts,tsx}", "default": "*"},
+                "case_insensitive": {"type": "boolean", "description": "Case-insensitive search (-i flag)", "default": True},
             },
             "required": ["pattern"],
         },
@@ -222,12 +230,16 @@ grep_tool = register_tool(
 find_tool = register_tool(
     Tool(
         name="find",
-        description="Find files and directories by glob pattern.",
+        description=(
+            "Find files and directories by name pattern. Use this instead of `bash find`/`ls`/`fd`. "
+            "Supports ripgrep internally for fast search. "
+            "Returns matching file paths sorted alphabetically."
+        ),
         parameters={
             "type": "object",
             "properties": {
-                "pattern": {"type": "string", "description": "Glob pattern to match", "default": "*"},
-                "path": {"type": "string", "description": "Directory to search in", "default": "."},
+                "pattern": {"type": "string", "description": "Glob pattern, e.g. *.py, **/*.ts, src/**/*.json", "default": "*"},
+                "path": {"type": "string", "description": "Directory to search in (relative to working dir or absolute)", "default": "."},
             },
         },
         execute=_find_files,
@@ -238,11 +250,14 @@ find_tool = register_tool(
 ls_tool = register_tool(
     Tool(
         name="ls",
-        description="List a directory's contents.",
+        description=(
+            "List a directory's contents. Use this instead of `bash ls`. "
+            "Returns file and directory names, sorted with directories first."
+        ),
         parameters={
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "Directory to list", "default": "."},
+                "path": {"type": "string", "description": "Directory to list (relative to working dir or absolute)", "default": "."},
             },
         },
         execute=_list_dir,

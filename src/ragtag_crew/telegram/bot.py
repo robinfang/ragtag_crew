@@ -53,9 +53,21 @@ _sessions: dict[int, AgentSession] = {}
 
 # Default system prompt
 _SYSTEM_PROMPT = (
-    "You are a helpful coding assistant.  You have access to tools for "
-    "reading, writing, and editing files, as well as running shell commands.  "
-    "Use them when the user's request requires interacting with the filesystem."
+    "You are a concise, efficient coding assistant.  "
+    "Follow these tool usage rules strictly:\n"
+    "\n"
+    "1. **Use built-in tools first**: prefer `read`, `write`, `edit`, `grep`, `find`, `ls` over `bash`. "
+    "These tools are faster, safer, and produce cleaner output.\n"
+    "2. **`grep`** for content search, **`find`** for file name search, **`ls`** for directory listing. "
+    "Do NOT use `bash` with `grep`/`find`/`ls` commands for these tasks.\n"
+    "3. **`bash`** is only for operations that built-in tools cannot do: "
+    "installing packages, running scripts, git operations, system commands, etc.\n"
+    "4. **Be concise**: respond in as few words as possible. "
+    "Avoid preamble, summaries, and explanations unless asked.\n"
+    "5. **Windows environment**: you are running on Windows. "
+    "Use forward slashes or backslashes for paths. "
+    "For paths outside the working directory, use `bash` with native Windows commands.\n"
+    "6. **Batch operations**: make multiple independent tool calls in a single turn when possible."
 )
 
 
@@ -87,7 +99,9 @@ def _is_authorized(user_id: int) -> bool:
 
 async def _cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_authorized(update.effective_user.id):
+        log.warning("Unauthorized /start from user_id=%s", update.effective_user.id)
         return
+    log.debug("/start from chat_id=%s", update.effective_chat.id)
     await update.message.reply_text(
         "Hello! I'm your AI coding agent.\n"
         f"Model: {settings.default_model}\n"
@@ -126,6 +140,7 @@ def _context_status_text(session: AgentSession) -> str:
 
 async def _cmd_new(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_authorized(update.effective_user.id):
+        log.warning("Unauthorized /new from user_id=%s", update.effective_user.id)
         return
     chat_id = update.effective_chat.id
     session = _get_session(chat_id)
@@ -134,16 +149,19 @@ async def _cmd_new(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     session.reset()
     delete_session(chat_id)
+    log.info("[chat %s] /new — session cleared", chat_id)
     await update.message.reply_text("Session cleared.")
 
 
 async def _cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_authorized(update.effective_user.id):
+        log.warning("Unauthorized /model from user_id=%s", update.effective_user.id)
         return
     chat_id = update.effective_chat.id
     session = _get_session(chat_id)
     args = (context.args or [])
     if not args:
+        log.debug("[chat %s] /model show — current: %s", chat_id, session.model)
         await update.message.reply_text(f"Current model: {session.model}\n\nUsage: /model <litellm-model-name>")
         return
     new_model = args[0]
@@ -151,6 +169,7 @@ async def _cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     try:
         summary = await validate_model(new_model)
     except Exception as exc:
+        log.warning("[chat %s] /model %s — validation failed: %s", chat_id, new_model, exc)
         await update.message.reply_text(
             "Model validation failed; keeping current model.\n"
             f"Current model: {previous_model}\n"
@@ -160,6 +179,7 @@ async def _cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     session.model = new_model
     save_session(chat_id, session)
+    log.info("[chat %s] /model %s -> %s", chat_id, previous_model, new_model)
     await update.message.reply_text(
         f"Model switched to: {new_model}\nValidation reply: {summary}"
     )
@@ -167,34 +187,40 @@ async def _cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 async def _cmd_tools(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_authorized(update.effective_user.id):
+        log.warning("Unauthorized /tools from user_id=%s", update.effective_user.id)
         return
     chat_id = update.effective_chat.id
     session = _get_session(chat_id)
     args = (context.args or [])
     if not args:
         names = [t.name for t in session.tools]
+        log.debug("[chat %s] /tools show — preset: %s, tools: %s", chat_id, session.tool_preset, names)
         await update.message.reply_text(f"Active tools: {', '.join(names)}\n\nUsage: /tools coding|readonly")
         return
     preset = args[0]
     try:
         new_tools = get_tools_for_preset(preset)
     except KeyError:
+        log.warning("[chat %s] /tools %s — unknown preset", chat_id, preset)
         await update.message.reply_text(f"Unknown preset: {preset}\nAvailable: coding, readonly")
         return
     session.tools = new_tools
     session.tool_preset = preset
     save_session(chat_id, session)
     names = [t.name for t in new_tools]
+    log.info("[chat %s] /tools -> %s", chat_id, preset)
     await update.message.reply_text(f"Tools switched to '{preset}': {', '.join(names)}")
 
 
 async def _cmd_skills(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_authorized(update.effective_user.id):
+        log.warning("Unauthorized /skills from user_id=%s", update.effective_user.id)
         return
     chat_id = update.effective_chat.id
     session = _get_session(chat_id)
     available = list_skills()
     active = ", ".join(session.enabled_skills) if session.enabled_skills else "(none)"
+    log.debug("[chat %s] /skills — active: %s, available: %d", chat_id, active, len(available))
     if not available:
         await update.message.reply_text(
             f"Active skills: {active}\nNo local skills found in {settings.skills_dir}"
@@ -210,12 +236,14 @@ async def _cmd_skills(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 async def _cmd_skill(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_authorized(update.effective_user.id):
+        log.warning("Unauthorized /skill from user_id=%s", update.effective_user.id)
         return
     chat_id = update.effective_chat.id
     session = _get_session(chat_id)
     args = context.args or []
     if not args:
         active = ", ".join(session.enabled_skills) if session.enabled_skills else "(none)"
+        log.debug("[chat %s] /skill show — active: %s", chat_id, active)
         await update.message.reply_text(
             "Usage: /skill use <name> | /skill drop <name> | /skill clear\n"
             f"Active skills: {active}"
@@ -226,6 +254,7 @@ async def _cmd_skill(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if action == "clear":
         session.enabled_skills = []
         save_session(chat_id, session)
+        log.info("[chat %s] /skill clear", chat_id)
         await update.message.reply_text("Cleared all active skills.")
         return
 
@@ -237,6 +266,7 @@ async def _cmd_skill(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     try:
         skill = get_skill(skill_name)
     except KeyError:
+        log.warning("[chat %s] /skill %s — unknown skill: %s", chat_id, action, skill_name)
         await update.message.reply_text(f"Unknown skill: {skill_name}")
         return
 
@@ -244,12 +274,14 @@ async def _cmd_skill(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         if skill.name not in session.enabled_skills:
             session.enabled_skills.append(skill.name)
         save_session(chat_id, session)
+        log.info("[chat %s] /skill use %s", chat_id, skill.name)
         await update.message.reply_text(f"Enabled skill: {skill.name}")
         return
 
     if action == "drop":
         session.enabled_skills = [name for name in session.enabled_skills if name != skill.name]
         save_session(chat_id, session)
+        log.info("[chat %s] /skill drop %s", chat_id, skill.name)
         await update.message.reply_text(f"Disabled skill: {skill.name}")
         return
 
@@ -258,10 +290,12 @@ async def _cmd_skill(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 async def _cmd_memory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_authorized(update.effective_user.id):
+        log.warning("Unauthorized /memory from user_id=%s", update.effective_user.id)
         return
 
     args = context.args or []
     if not args:
+        log.debug("[chat %s] /memory show", update.effective_chat.id)
         index = read_memory_index()
         files = list_memory_files()
         file_lines = [f"- {name}" for name in files] or ["- (none)"]
@@ -305,6 +339,7 @@ async def _cmd_memory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             await update.message.reply_text("Usage: /memory add <note>")
             return
         path = append_memory_note(note)
+        log.info("[chat %s] /memory add -> %s/%s", update.effective_chat.id, path.parent.name, path.name)
         await update.message.reply_text(f"Added memory note to {path.parent.name}/{path.name}")
         return
 
@@ -313,9 +348,11 @@ async def _cmd_memory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         try:
             path, count = promote_inbox(target)
         except ValueError as exc:
+            log.warning("[chat %s] /memory promote %s — failed: %s", update.effective_chat.id, target, exc)
             await update.message.reply_text(str(exc))
             return
         location = path.name if path.name == "MEMORY.md" else f"{path.parent.name}/{path.name}"
+        log.info("[chat %s] /memory promote %d entries -> %s", update.effective_chat.id, count, location)
         await update.message.reply_text(f"Promoted {count} inbox entr{'y' if count == 1 else 'ies'} to {location}")
         return
 
@@ -326,12 +363,14 @@ async def _cmd_memory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 async def _cmd_context(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_authorized(update.effective_user.id):
+        log.warning("Unauthorized /context from user_id=%s", update.effective_user.id)
         return
 
     chat_id = update.effective_chat.id
     session = _get_session(chat_id)
     args = context.args or []
     if not args or args[0].lower() == "show":
+        log.debug("[chat %s] /context show", chat_id)
         await update.message.reply_text(_context_status_text(session))
         return
 
@@ -344,11 +383,13 @@ async def _cmd_context(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         changed = session.compact(force=True)
         save_session(chat_id, session)
         if not changed:
+            log.debug("[chat %s] /context compress — no change", chat_id)
             await update.message.reply_text(
                 "No compaction needed yet.\n\n" + _context_status_text(session)
             )
             return
 
+        log.info("[chat %s] /context compress — done, %d messages kept", chat_id, len(session.messages))
         await update.message.reply_text(
             "Context compacted.\n\n" + _context_status_text(session)
         )
@@ -445,16 +486,19 @@ def _format_browser_status_text(session: AgentSession) -> str:
 
 async def _cmd_ext(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_authorized(update.effective_user.id):
+        log.warning("Unauthorized /ext from user_id=%s", update.effective_user.id)
         return
 
     args = context.args or []
     action = args[0].lower() if args else "show"
     if action == "show":
+        log.debug("[chat %s] /ext show", update.effective_chat.id)
         await update.message.reply_text(_format_capability_status_text())
         return
 
     if action == "reload":
         await initialize_external_capabilities(force=True)
+        log.info("[chat %s] /ext reload", update.effective_chat.id)
         await update.message.reply_text(
             "External capabilities reloaded.\n\n" + _format_capability_status_text()
         )
@@ -465,17 +509,21 @@ async def _cmd_ext(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def _cmd_mcp(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_authorized(update.effective_user.id):
+        log.warning("Unauthorized /mcp from user_id=%s", update.effective_user.id)
         return
     args = context.args or []
     if args and args[0].lower() == "reload":
         await initialize_external_capabilities(force=True)
+        log.info("[chat %s] /mcp reload", update.effective_chat.id)
         await update.message.reply_text("MCP capabilities reloaded.\n\n" + _format_mcp_status_text())
         return
+    log.debug("[chat %s] /mcp show", update.effective_chat.id)
     await update.message.reply_text(_format_mcp_status_text())
 
 
 async def _cmd_browser(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_authorized(update.effective_user.id):
+        log.warning("Unauthorized /browser from user_id=%s", update.effective_user.id)
         return
 
     chat_id = update.effective_chat.id
@@ -484,6 +532,7 @@ async def _cmd_browser(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     action = args[0].lower() if args else "status"
 
     if action == "status":
+        log.debug("[chat %s] /browser status", chat_id)
         await update.message.reply_text(_format_browser_status_text(session))
         return
 
@@ -512,6 +561,7 @@ async def _cmd_browser(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             return
         session.browser_mode = mode
         save_session(chat_id, session)
+        log.info("[chat %s] /browser mode -> %s", chat_id, mode)
         await update.message.reply_text(
             f"Browser mode switched to: {mode}\n\n" + _format_browser_status_text(session)
         )
@@ -520,6 +570,7 @@ async def _cmd_browser(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if action == "confirm-attached":
         session.browser_attached_confirmed = True
         save_session(chat_id, session)
+        log.info("[chat %s] /browser confirm-attached", chat_id)
         await update.message.reply_text(
             "Attached browser confirmed for this session.\n\n" + _format_browser_status_text(session)
         )
@@ -530,6 +581,7 @@ async def _cmd_browser(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         if session.browser_mode == "attached":
             session.browser_mode = "isolated"
         save_session(chat_id, session)
+        log.info("[chat %s] /browser revoke-attached", chat_id)
         await update.message.reply_text(
             "Attached browser confirmation revoked.\n\n" + _format_browser_status_text(session)
         )
@@ -544,6 +596,7 @@ async def _cmd_browser(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             return
         ok, detail = await connect_attached_browser()
         await initialize_external_capabilities(force=True)
+        log.info("[chat %s] /browser connect — %s", chat_id, "ok" if ok else "failed")
         prefix = "Attached browser connected." if ok else "Attached browser connect failed."
         await update.message.reply_text(
             f"{prefix}\n{detail}\n\n" + _format_browser_status_text(session)
@@ -553,6 +606,7 @@ async def _cmd_browser(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if action == "disconnect":
         detail = disconnect_attached_browser()
         await initialize_external_capabilities(force=True)
+        log.info("[chat %s] /browser disconnect", chat_id)
         await update.message.reply_text(detail + "\n\n" + _format_browser_status_text(session))
         return
 
@@ -563,6 +617,7 @@ async def _cmd_browser(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_authorized(update.effective_user.id):
+        log.warning("Unauthorized message from user_id=%s", update.effective_user.id)
         return
 
     chat_id = update.effective_chat.id
@@ -571,6 +626,7 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     session = _get_session(chat_id)
+    log.debug("[chat %s] prompt: %.80s", chat_id, text)
 
     if session.is_busy:
         await update.message.reply_text("Please wait for the current response to finish.")

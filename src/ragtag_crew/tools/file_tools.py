@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from ragtag_crew.tools import Tool, register_tool
-from ragtag_crew.tools.path_utils import resolve_path
+from ragtag_crew.tools.path_utils import resolve_path, resolve_read_path
 
 
 # ---- read -----------------------------------------------------------------
 
 async def _read_file(path: str, offset: int = 1, limit: int = 2000) -> str:
-    resolved = resolve_path(path)
+    resolved = resolve_read_path(path)
     if not resolved.is_file():
         return f"ERROR: file not found: {path}"
     try:
@@ -32,8 +32,8 @@ read_tool = register_tool(
     Tool(
         name="read",
         description=(
-            "Read the contents of a file.  Returns numbered lines.  "
-            "Use offset/limit for large files."
+            "Read a file's contents with line numbers. Use offset/limit for large files. "
+            "Do NOT use `bash cat`/`head`/`tail` to read files."
         ),
         parameters={
             "type": "object",
@@ -73,7 +73,10 @@ async def _write_file(path: str, content: str) -> str:
 write_tool = register_tool(
     Tool(
         name="write",
-        description="Create or overwrite a file with the given content.",
+        description=(
+            "Create or overwrite a file. "
+            "Do NOT use `bash echo`/`cat` with redirects to write files."
+        ),
         parameters={
             "type": "object",
             "properties": {
@@ -122,8 +125,9 @@ edit_tool = register_tool(
     Tool(
         name="edit",
         description=(
-            "Replace a unique string in a file.  old_string must appear exactly "
-            "once; include surrounding context to make it unique."
+            "Replace a unique string in a file. old_string must appear exactly once; "
+            "include surrounding context to make it unique. "
+            "Do NOT use `bash sed`/`awk` to edit files."
         ),
         parameters={
             "type": "object",

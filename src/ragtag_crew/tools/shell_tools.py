@@ -55,8 +55,11 @@ bash_tool = register_tool(
     Tool(
         name="bash",
         description=(
-            "Execute a shell command and return stdout/stderr.  "
-            "The command runs in the agent working directory."
+            "Execute a shell command. Runs in the agent working directory. "
+            "ONLY use for operations that built-in tools cannot handle: "
+            "installing packages, running scripts, git operations, system commands, etc. "
+            "Do NOT use for file search (use `grep`/`find`/`ls` instead) "
+            "or file reading/writing (use `read`/`write`/`edit` instead)."
         ),
         parameters={
             "type": "object",

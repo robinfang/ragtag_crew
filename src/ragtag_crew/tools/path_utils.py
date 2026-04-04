@@ -26,6 +26,19 @@ def resolve_path(raw: str) -> Path:
     return resolved
 
 
+def resolve_read_path(raw: str) -> Path:
+    """Resolve a path for read-only operations.
+
+    Relative paths are anchored to the working directory (same as resolve_path).
+    Absolute paths are resolved directly without sandbox checks.
+    """
+    base = get_working_dir()
+    candidate = Path(raw).expanduser()
+    if candidate.is_absolute():
+        return candidate.resolve()
+    return (base / candidate).resolve()
+
+
 def display_path(path: Path) -> str:
     """Render a path relative to the working directory when possible."""
     base = get_working_dir()

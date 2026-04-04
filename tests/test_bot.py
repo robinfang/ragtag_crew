@@ -149,7 +149,7 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Validation reply: OK", update.message.reply_calls[0]["text"])
 
     async def test_cmd_tools_without_args_lists_active_tools(self) -> None:
-        session = SimpleNamespace(tools=[SimpleNamespace(name="read"), SimpleNamespace(name="grep")])
+        session = SimpleNamespace(tools=[SimpleNamespace(name="read"), SimpleNamespace(name="grep")], tool_preset="coding")
         bot_module._sessions[100] = session
         update = FakeUpdate(chat_id=100)
 
