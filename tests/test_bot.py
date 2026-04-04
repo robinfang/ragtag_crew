@@ -67,13 +67,8 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(update.message.reply_calls), 1)
         reply = update.message.reply_calls[0]["text"]
-        self.assertIn("/skills", reply)
-        self.assertIn("/skill", reply)
-        self.assertIn("/memory", reply)
-        self.assertIn("/context", reply)
-        self.assertIn("/mcp", reply)
-        self.assertIn("/ext", reply)
-        self.assertIn("/browser", reply)
+        self.assertIn("Hello", reply)
+        self.assertIn("输入 / 查看所有可用命令", reply)
 
     async def test_cmd_start_ignores_unauthorized_user(self) -> None:
         update = FakeUpdate(user_id=99)
@@ -722,7 +717,10 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
                 return self
 
             def build(self) -> object:
-                return SimpleNamespace(add_handler=lambda handler: added_handlers.append(handler))
+                return SimpleNamespace(
+                    add_handler=lambda handler: added_handlers.append(handler),
+                    post_init=None,
+                )
 
         fake_application = SimpleNamespace(builder=lambda: FakeBuilder())
 
@@ -737,6 +735,30 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         init_external.assert_called_once()
         self.assertEqual(len(added_handlers), 12)
         self.assertIsNotNone(app)
+        self.assertIsNotNone(app.post_init)
+
+    async def test_register_commands(self) -> None:
+        fake_bot = AsyncMock()
+        app = SimpleNamespace(bot=fake_bot)
+
+        await bot_module._register_commands(app)
+
+        fake_bot.set_my_commands.assert_awaited_once()
+        commands = fake_bot.set_my_commands.await_args[0][0]
+        command_names = [c.command for c in commands]
+        for expected in bot_module._REGISTERED_COMMAND_NAMES:
+            self.assertIn(expected, command_names)
+
+    def test_bot_commands_match_handlers(self) -> None:
+        handler_commands = [
+            "start", "new", "model", "tools", "skills",
+            "skill", "memory", "context", "mcp", "ext", "browser",
+        ]
+        for cmd in handler_commands:
+            if cmd == "start":
+                continue
+            self.assertIn(cmd, bot_module._REGISTERED_COMMAND_NAMES)
+        self.assertEqual(len(bot_module._BOT_COMMANDS), len(handler_commands) - 1)
 
 
 if __name__ == "__main__":
