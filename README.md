@@ -12,8 +12,11 @@
 ## 当前能力
 
 - litellm 统一接入多模型
-- 已实现 `read` / `write` / `edit` / `bash` / `grep` / `find` / `ls` 七个基础工具
+- 已实现 `read` / `write` / `edit` / `delete_file` / `bash` / `grep` / `find` / `ls` 八个基础工具
+- 工具路径沙箱：写操作限制在工作目录内，读操作允许访问任意绝对路径
+- 文件删除保护：bash 拦截 `rm`/`del`/`rmdir` 等删除命令，统一通过 `delete_file` 工具执行
 - Telegram 流式输出、HTML 富文本渲染、消息编辑节流、单用户鉴权已接通
+- 完善的命令级日志记录：状态变更 INFO、权限/失败 WARNING、只读查询 DEBUG
 - 已支持 LLM 超时、整轮超时和 JSON 会话持久化
 - 已支持本地 Markdown skill 的会话级启用
 - 已接入 `PROJECT.md` / `USER.local.md` / `MEMORY.md` 分层上下文
@@ -69,10 +72,11 @@ ragtag_crew/
 │       │   ├── bot.py        # Telegram 接入层
 │       │   └── stream.py     # 流式输出与消息编辑
 │       └── tools/
-│           ├── __init__.py   # 工具注册与预设
-│           ├── file_tools.py
-│           ├── shell_tools.py
-│           └── search_tools.py
+│           ├── __init__.py       # 工具注册与预设
+│           ├── file_tools.py     # read / write / edit / delete_file
+│           ├── shell_tools.py    # bash（含删除命令拦截）
+│           ├── search_tools.py   # grep / find / ls
+│           └── path_utils.py     # 路径沙箱工具函数
 ├── archive/
 │   └── pi-sdk-validation/    # 早期 Pi SDK 验证资料
 ├── PROJECT.md                # 仓库共享的项目背景
