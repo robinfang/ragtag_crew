@@ -672,8 +672,11 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 # -- application builder ---------------------------------------------------
 
 async def _register_commands(app: Application) -> None:
-    await app.bot.set_my_commands(_BOT_COMMANDS)
-    log.info("bot command menu registered (%d commands)", len(_BOT_COMMANDS))
+    try:
+        await app.bot.set_my_commands(_BOT_COMMANDS)
+        log.info("bot command menu registered (%d commands)", len(_BOT_COMMANDS))
+    except Exception:
+        log.warning("failed to register bot command menu, continuing without it", exc_info=True)
 
 
 def build_app() -> Application:
