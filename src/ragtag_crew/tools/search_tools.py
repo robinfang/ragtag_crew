@@ -1,10 +1,15 @@
-"""Search tools: grep, find, ls."""
+"""Search tools: grep, find, ls.
+
+Uses ripgrep (rg) for high-performance file and content search when available,
+with Python fallback when rg is not installed.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import fnmatch
 import re
+import shutil
 from pathlib import Path
 
 from ragtag_crew.tools import Tool, register_tool
@@ -22,6 +27,27 @@ def _truncate(text: str) -> str:
     return text if len(text) <= _MAX_OUTPUT else text[:_MAX_OUTPUT] + "\n...[truncated]"
 
 
+def _get_rg_path() -> str | None:
+    from ragtag_crew.config import settings
+
+    if settings.rg_command and settings.rg_command != "rg":
+        configured = Path(settings.rg_command)
+        if configured.is_file():
+            return str(configured)
+
+    which_result = shutil.which("rg")
+    if which_result:
+        return which_result
+
+    from ragtag_crew.tools.bin_resolver import _cached_binary
+
+    cached = _cached_binary("rg")
+    if cached.is_file():
+        return str(cached)
+
+    return None
+
+
 async def _grep_search(pattern: str, path: str = ".", include: str = "*") -> str:
     root = resolve_path(path)
     if not root.exists():
@@ -35,7 +61,11 @@ async def _grep_search(pattern: str, path: str = ".", include: str = "*") -> str
 
 
 async def _grep_with_rg(pattern: str, root: Path, include: str) -> str | None:
-    command = ["rg", "--line-number", "--with-filename", pattern, str(root)]
+    rg_path = _get_rg_path()
+    if rg_path is None:
+        return None
+
+    command = [rg_path, "--line-number", "--with-filename", pattern, str(root)]
     if include and include != "*":
         command[1:1] = ["--glob", include]
 
@@ -45,10 +75,16 @@ async def _grep_with_rg(pattern: str, root: Path, include: str) -> str | None:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-    except FileNotFoundError:
+    except (FileNotFoundError, OSError):
         return None
 
-    stdout, stderr = await proc.communicate()
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.communicate()
+        return f"ERROR: ripgrep timed out after 30s."
+
     if proc.returncode not in (0, 1):
         error = stderr.decode(errors="replace").strip() or f"rg exited with code {proc.returncode}"
         return f"ERROR: {error}"
@@ -91,6 +127,48 @@ async def _find_files(pattern: str = "*", path: str = ".") -> str:
     if not root.exists():
         return f"ERROR: path not found: {path}"
 
+    rg_result = await _find_with_rg(pattern=pattern, root=root)
+    if rg_result is not None:
+        return rg_result
+
+    return await _find_with_python(pattern=pattern, root=root)
+
+
+async def _find_with_rg(pattern: str, root: Path) -> str | None:
+    rg_path = _get_rg_path()
+    if rg_path is None:
+        return None
+
+    command = [rg_path, "--files", "--sort", "path"]
+    if pattern and pattern != "*":
+        command.extend(["--glob", pattern])
+    command.append(str(root))
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except (FileNotFoundError, OSError):
+        return None
+
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.communicate()
+        return f"ERROR: ripgrep timed out after 30s."
+
+    if proc.returncode not in (0, 1):
+        error = stderr.decode(errors="replace").strip() or f"rg exited with code {proc.returncode}"
+        return f"ERROR: {error}"
+
+    output = stdout.decode(errors="replace").strip()
+    return _truncate(output) if output else "No files found."
+
+
+async def _find_with_python(pattern: str, root: Path) -> str:
     if root.is_file():
         matched = fnmatch.fnmatch(root.name, pattern) or fnmatch.fnmatch(display_path(root), pattern)
         return display_path(root) if matched else "No files found."

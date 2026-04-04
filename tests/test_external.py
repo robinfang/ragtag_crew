@@ -13,6 +13,7 @@ from ragtag_crew.external import everything as everything_module
 from ragtag_crew.external import browser_agent as browser_module
 from ragtag_crew.external import manager as manager_module
 from ragtag_crew.external import mcp_client as mcp_module
+from ragtag_crew.external import openapi_provider as openapi_module
 from ragtag_crew.external import web_search as web_search_module
 from ragtag_crew.tools import _ALL_TOOLS, get_tools_for_preset
 
@@ -184,6 +185,130 @@ class WebSearchTests(unittest.TestCase):
         self.assertIn("web_search", tool_names)
 
 
+class OpenAPIConfigTests(unittest.TestCase):
+    def test_load_openapi_provider_configs_reads_list_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "openapi_tools.local.json"
+            config_path.write_text(
+                json.dumps(
+                    [
+                        {
+                            "name": "search-gateway",
+                            "base_url": "http://127.0.0.1:8080",
+                            "enabled": True,
+                            "tools": [
+                                {
+                                    "name": "search_gateway_query",
+                                    "description": "Search via gateway",
+                                    "path": "/search",
+                                    "presets": ["coding", "readonly"],
+                                    "parameters": {
+                                        "type": "object",
+                                        "properties": {"query": {"type": "string"}},
+                                        "required": ["query"],
+                                    },
+                                    "request_body": {"query": "$query"},
+                                    "result_mode": "search_results",
+                                }
+                            ],
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with temp_setting("openapi_tools_file", str(config_path)):
+                providers = openapi_module.load_openapi_provider_configs()
+
+        self.assertEqual(len(providers), 1)
+        self.assertEqual(providers[0].name, "search-gateway")
+        self.assertEqual(providers[0].tools[0].name, "search_gateway_query")
+
+
+class OpenAPIToolTests(unittest.IsolatedAsyncioTestCase):
+    def tearDown(self) -> None:
+        for name in list(_ALL_TOOLS):
+            if name.startswith("search_gateway"):
+                _ALL_TOOLS.pop(name, None)
+
+    async def test_register_openapi_tools_adds_tool_to_readonly_preset(self) -> None:
+        provider = openapi_module.OpenAPIProviderConfig(
+            name="search-gateway",
+            base_url="http://127.0.0.1:8080",
+            tools=(
+                openapi_module.OpenAPIToolConfig(
+                    name="search_gateway_query",
+                    description="Search via gateway",
+                    path="/search",
+                    presets=("coding", "readonly"),
+                    parameters={
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                        "required": ["query"],
+                    },
+                    request_body={"query": "$query"},
+                    result_mode="search_results",
+                ),
+            ),
+        )
+
+        with patch(
+            "ragtag_crew.external.openapi_provider.load_openapi_provider_configs",
+            return_value=[provider],
+        ):
+            statuses = openapi_module.register_openapi_tools()
+
+        readonly_names = [tool.name for tool in get_tools_for_preset("readonly")]
+        self.assertEqual([status.key for status in statuses], ["openapi:search-gateway"])
+        self.assertIn("search_gateway_query", readonly_names)
+
+    async def test_openapi_tool_formats_search_results(self) -> None:
+        provider = openapi_module.OpenAPIProviderConfig(
+            name="search-gateway",
+            base_url="http://127.0.0.1:8080",
+            tools=(
+                openapi_module.OpenAPIToolConfig(
+                    name="search_gateway_query",
+                    description="Search via gateway",
+                    path="/search",
+                    presets=("readonly",),
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string"},
+                            "num_results": {"type": "integer"},
+                        },
+                        "required": ["query"],
+                    },
+                    request_body={"query": "$query", "num_results": "$num_results"},
+                    result_mode="search_results",
+                ),
+            ),
+        )
+
+        with patch(
+            "ragtag_crew.external.openapi_provider.load_openapi_provider_configs",
+            return_value=[provider],
+        ), patch(
+            "ragtag_crew.external.openapi_provider._fetch_json_response",
+            return_value={
+                "results": [
+                    {
+                        "title": "Example title",
+                        "url": "https://example.com/doc",
+                        "snippet": "Example snippet",
+                    }
+                ]
+            },
+        ):
+            openapi_module.register_openapi_tools()
+            tool = next(tool for tool in get_tools_for_preset("readonly") if tool.name == "search_gateway_query")
+            result = await tool.execute(query="hello", num_results=3)
+
+        self.assertIn("OpenAPI search results:", result)
+        self.assertIn("https://example.com/doc", result)
+
+
 class MCPConfigTests(unittest.TestCase):
     def test_load_mcp_server_configs_reads_list_shape(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -280,6 +405,12 @@ class ExternalManagerTests(unittest.IsolatedAsyncioTestCase):
             detail="detached (auto-connect)",
             tool_names=("browser_open",),
         )
+        openapi_status = manager_module.CapabilityStatus(
+            key="openapi:search-gateway",
+            kind="openapi",
+            ready=True,
+            tool_names=("search_gateway_query",),
+        )
         mcp_status = manager_module.CapabilityStatus(
             key="mcp:fs",
             kind="mcp",
@@ -297,6 +428,9 @@ class ExternalManagerTests(unittest.IsolatedAsyncioTestCase):
             "ragtag_crew.external.manager.register_browser_tools",
             return_value=[browser_isolated, browser_attached],
         ), patch(
+            "ragtag_crew.external.manager.register_openapi_tools",
+            return_value=[openapi_status],
+        ), patch(
             "ragtag_crew.external.manager.discover_mcp_tools",
             new=AsyncMock(return_value=[mcp_status]),
         ):
@@ -304,7 +438,7 @@ class ExternalManagerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             [status.key for status in statuses],
-            ["web-search", "everything", "browser-isolated", "browser-attached", "mcp:fs"],
+            ["web-search", "everything", "browser-isolated", "browser-attached", "openapi:search-gateway", "mcp:fs"],
         )
         self.assertEqual([status.key for status in manager_module.get_mcp_statuses()], ["mcp:fs"])
 

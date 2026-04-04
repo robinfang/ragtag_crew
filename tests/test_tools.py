@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import tempfile
 import unittest
 from contextlib import contextmanager
@@ -108,11 +109,62 @@ class SearchToolTests(unittest.IsolatedAsyncioTestCase):
             (root / "notes.txt").write_text("def main in text\n", encoding="utf-8")
 
             with working_dir(root):
-                with patch("ragtag_crew.tools.search_tools._grep_with_rg", return_value=None):
+                with patch("ragtag_crew.tools.search_tools._get_rg_path", return_value=None):
                     result = await search_tools._grep_search("def main", ".", "*.py")
 
             self.assertIn("app.py:1: def main():", result)
             self.assertNotIn("notes.txt", result)
+
+    async def test_find_with_rg_uses_system_rg(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "hello.py").write_text("# test\n", encoding="utf-8")
+
+            with working_dir(root):
+                with patch(
+                    "ragtag_crew.tools.search_tools._get_rg_path", return_value="/usr/bin/rg"
+                ):
+                    mock_instance = await self._create_mock_proc(b"hello.py\n", b"")
+                    with patch(
+                        "ragtag_crew.tools.search_tools.asyncio.create_subprocess_exec",
+                        return_value=mock_instance,
+                    ):
+                        await search_tools._find_files("*.py", ".")
+
+    async def test_grep_with_rg_falls_back_on_file_not_found(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "app.py").write_text("import os\n", encoding="utf-8")
+
+            with working_dir(root):
+                with patch(
+                    "ragtag_crew.tools.search_tools._get_rg_path", return_value="/nonexistent/rg"
+                ):
+                    with patch(
+                        "ragtag_crew.tools.search_tools.asyncio.create_subprocess_exec",
+                        side_effect=FileNotFoundError,
+                    ):
+                        result = await search_tools._grep_search("import", ".", "*.py")
+
+            self.assertIn("app.py:1:", result)
+
+    async def test_find_with_rg_falls_back_when_rg_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "test.py").write_text("# test\n", encoding="utf-8")
+
+            with working_dir(root):
+                with patch("ragtag_crew.tools.search_tools._get_rg_path", return_value=None):
+                    result = await search_tools._find_files("*.py", ".")
+
+            self.assertIn("test.py", result)
+
+    @staticmethod
+    async def _create_mock_proc(stdout: bytes, stderr: bytes):
+        mock = unittest.mock.AsyncMock()
+        mock.communicate.return_value = (stdout, stderr)
+        mock.returncode = 0
+        return mock
 
 
 if __name__ == "__main__":

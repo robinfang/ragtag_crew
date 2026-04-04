@@ -23,6 +23,7 @@
 - 已建立阶段 1 外部能力接入层骨架，开始支持平台工具与 `MCP client`
 - 已支持最小联网搜索 API 接入口，可按配置启用 `web_search`
 - Windows 下可启用 `Everything` 搜索适配器；可通过 `/mcp` 查看已配置 MCP 状态
+- 已支持固定 `OpenAPI provider` 接入，可为未来 search gateway 预留稳定工具入口
 - 已接入基于 `agent-browser` 的浏览器能力骨架，支持独立浏览器模式与当前 Chromium 浏览器接管模式
 - 浏览器第一版安全边界已接入：可配置域名白名单，attached 模式要求显式确认
 - 图片输入仍在后续阶段
@@ -48,6 +49,7 @@ uv run python -m ragtag_crew.main
 - 用 `/memory promote [target]` 把 `inbox.md` 中待整理条目并入 `MEMORY.md` 或指定记忆文件
 - 用 `/context` 查看当前会话摘要状态，必要时用 `/context compress` 手动收口
 - 复制 `mcp_servers.example.json` 为 `mcp_servers.local.json` 后，可通过 `/mcp` 查看 MCP server 状态
+- 复制 `openapi_tools.example.json` 为 `openapi_tools.local.json` 后，可通过 `/ext` 查看固定 OpenAPI provider 状态
 - 配置 `WEB_SEARCH_*` 后，可把 `web_search` 挂到 `coding` / `readonly` 预设中
 - 安装 `agent-browser` 并启用 `AGENT_BROWSER_*` / `BROWSER_*` 配置后，可通过 `/browser` 和 `/ext` 管理浏览器能力
 - 如需限制浏览器能力范围，可配置 `BROWSER_ALLOWED_DOMAINS`；attached 模式默认要求先执行 `/browser confirm-attached`

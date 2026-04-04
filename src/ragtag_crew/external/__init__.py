@@ -6,6 +6,7 @@ from ragtag_crew.external.manager import (
     ensure_external_capabilities_initialized,
     get_capability_statuses,
     get_mcp_statuses,
+    get_openapi_statuses,
     initialize_external_capabilities,
 )
 
@@ -15,5 +16,6 @@ __all__ = [
     "ensure_external_capabilities_initialized",
     "get_capability_statuses",
     "get_mcp_statuses",
+    "get_openapi_statuses",
     "initialize_external_capabilities",
 ]

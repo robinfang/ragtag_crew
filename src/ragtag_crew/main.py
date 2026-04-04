@@ -2,9 +2,14 @@
 
 import argparse
 import logging
+import logging.handlers
+import os
 from collections.abc import Sequence
+from pathlib import Path
 
 from ragtag_crew.config import settings
+
+_LOG_FORMAT = "%(asctime)s %(levelname)-8s %(name)s  %(message)s"
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -26,14 +31,36 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     return build_arg_parser().parse_args(list(argv) if argv is not None else None)
 
 
+def _setup_logging() -> None:
+    log_dir = Path(settings.log_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    root = logging.getLogger()
+    root.setLevel(getattr(logging, settings.log_level.upper(), logging.INFO))
+
+    fmt = logging.Formatter(_LOG_FORMAT)
+
+    stderr = logging.StreamHandler()
+    stderr.setFormatter(fmt)
+    root.addHandler(stderr)
+
+    file_handler = logging.handlers.RotatingFileHandler(
+        log_dir / "ragtag_crew.log",
+        maxBytes=settings.log_max_bytes,
+        backupCount=settings.log_backup_count,
+        encoding="utf-8",
+    )
+    file_handler.setFormatter(fmt)
+    root.addHandler(file_handler)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     _parse_args(argv)
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)-8s %(name)s  %(message)s",
-    )
+    _setup_logging()
     log = logging.getLogger(__name__)
+
+    log.info("ragtag_crew starting  pid=%s", os.getpid())
 
     # Validate essential config
     if not settings.telegram_bot_token:
@@ -46,6 +73,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     log.info("  cwd    = %s", settings.working_dir)
 
     from ragtag_crew.telegram.bot import build_app
+    from ragtag_crew.tools.bin_resolver import resolve_binary
+
+    try:
+        rg_path = resolve_binary("rg")
+        log.info("ripgrep ready: %s", rg_path)
+    except FileNotFoundError as exc:
+        log.error("ripgrep not available: %s", exc)
+        log.error("grep/find tools will use Python fallback (slow).")
+        log.error("Install ripgrep or ensure internet access for auto-download.")
 
     app = build_app()
     log.info("Telegram frontend started; polling...")

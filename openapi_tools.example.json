@@ -1,0 +1,39 @@
+[
+  {
+    "name": "search-gateway",
+    "base_url": "http://127.0.0.1:8080",
+    "api_key": "",
+    "auth_header": "Authorization",
+    "auth_scheme": "Bearer",
+    "headers": {},
+    "enabled": false,
+    "tools": [
+      {
+        "name": "search_gateway_query",
+        "description": "Query the fixed search gateway OpenAPI and return structured search results.",
+        "method": "POST",
+        "path": "/search",
+        "presets": ["coding", "readonly"],
+        "result_mode": "search_results",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "Search query"
+            },
+            "num_results": {
+              "type": "integer",
+              "description": "Maximum results to return"
+            }
+          },
+          "required": ["query"]
+        },
+        "request_body": {
+          "query": "$query",
+          "num_results": "$num_results"
+        }
+      }
+    ]
+  }
+]
