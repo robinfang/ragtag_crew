@@ -376,6 +376,93 @@ class MCPDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("mcp_fs_read_file", tool_names)
 
 
+class OpenAPIPathParamTests(unittest.TestCase):
+    def test_path_param_replaces_variable(self) -> None:
+        provider = openapi_module.OpenAPIProviderConfig(
+            name="test",
+            base_url="http://127.0.0.1:10001",
+        )
+        tool = openapi_module.OpenAPIToolConfig(
+            name="paper_collection_get",
+            description="Get collection",
+            path="/api/collections/$collection_id",
+            method="GET",
+        )
+        url = openapi_module._build_url(provider, tool, {"collection_id": 42})
+        self.assertEqual(url, "http://127.0.0.1:10001/api/collections/42")
+
+    def test_path_param_long_key_does_not_corrupt_short_key(self) -> None:
+        provider = openapi_module.OpenAPIProviderConfig(
+            name="test",
+            base_url="http://127.0.0.1:10001",
+        )
+        tool = openapi_module.OpenAPIToolConfig(
+            name="test",
+            description="Test",
+            path="/api/collections/$collection_id/items/$item_id",
+            method="GET",
+        )
+        url = openapi_module._build_url(provider, tool, {"collection_id": 1, "item_id": 99})
+        self.assertEqual(url, "http://127.0.0.1:10001/api/collections/1/items/99")
+
+    def test_path_param_url_encodes_special_chars(self) -> None:
+        provider = openapi_module.OpenAPIProviderConfig(
+            name="test",
+            base_url="http://127.0.0.1:10001",
+        )
+        tool = openapi_module.OpenAPIToolConfig(
+            name="test",
+            description="Test",
+            path="/api/search/$query",
+            method="GET",
+        )
+        url = openapi_module._build_url(provider, tool, {"query": "hello world"})
+        self.assertEqual(url, "http://127.0.0.1:10001/api/search/hello%20world")
+
+    def test_path_param_skips_none_values(self) -> None:
+        provider = openapi_module.OpenAPIProviderConfig(
+            name="test",
+            base_url="http://127.0.0.1:10001",
+        )
+        tool = openapi_module.OpenAPIToolConfig(
+            name="test",
+            description="Test",
+            path="/api/collections/$collection_id/items",
+            method="GET",
+        )
+        url = openapi_module._build_url(provider, tool, {"collection_id": 5, "filter": None})
+        self.assertEqual(url, "http://127.0.0.1:10001/api/collections/5/items")
+
+    def test_path_param_preserves_query_params(self) -> None:
+        provider = openapi_module.OpenAPIProviderConfig(
+            name="test",
+            base_url="http://127.0.0.1:10001",
+        )
+        tool = openapi_module.OpenAPIToolConfig(
+            name="test",
+            description="Test",
+            path="/api/collections/$collection_id/export",
+            method="GET",
+            query_params={"format": "json"},
+        )
+        url = openapi_module._build_url(provider, tool, {"collection_id": 3})
+        self.assertEqual(url, "http://127.0.0.1:10001/api/collections/3/export?format=json")
+
+    def test_path_param_url_encodes_reserved_chars(self) -> None:
+        provider = openapi_module.OpenAPIProviderConfig(
+            name="test",
+            base_url="http://127.0.0.1:10001",
+        )
+        tool = openapi_module.OpenAPIToolConfig(
+            name="test",
+            description="Test",
+            path="/api/items/$item_id",
+            method="GET",
+        )
+        url = openapi_module._build_url(provider, tool, {"item_id": "abc def+xyz"})
+        self.assertEqual(url, "http://127.0.0.1:10001/api/items/abc%20def%2Bxyz")
+
+
 class ExternalManagerTests(unittest.IsolatedAsyncioTestCase):
     async def test_initialize_external_capabilities_combines_statuses(self) -> None:
         manager_module._initialized = False

@@ -125,6 +125,9 @@ def load_openapi_provider_configs() -> list[OpenAPIProviderConfig]:
 
 def _build_url(provider: OpenAPIProviderConfig, tool: OpenAPIToolConfig, arguments: dict[str, Any]) -> str:
     path = tool.path if tool.path.startswith("/") else f"/{tool.path}"
+    for key in sorted(arguments.keys(), key=len, reverse=True):
+        if arguments[key] is not None:
+            path = path.replace(f"${key}", parse.quote(str(arguments[key]), safe=""))
     url = f"{provider.base_url}{path}"
     if tool.query_params:
         query_params = _render_template(tool.query_params, arguments)
