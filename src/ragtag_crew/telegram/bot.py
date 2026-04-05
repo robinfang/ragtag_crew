@@ -38,6 +38,7 @@ from ragtag_crew.memory_store import (
 from ragtag_crew.model_validation import validate_model
 from ragtag_crew.skill_loader import get_skill, list_skills
 from ragtag_crew.telegram.stream import TelegramStreamer
+from ragtag_crew.trace import TraceCollector
 from ragtag_crew.telegram.session_store import (
     cleanup_expired_sessions,
     delete_session,
@@ -653,7 +654,15 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     placeholder = await update.message.reply_text("Thinking...")
     streamer = TelegramStreamer(placeholder)
+    collector = TraceCollector(chat_id=chat_id)
+    collector.set_context(
+        model=session.model,
+        user_input=text,
+        tool_preset=session.tool_preset,
+        enabled_skills=session.enabled_skills,
+    )
     session.subscribe(streamer.on_event)
+    session.subscribe(collector.on_event)
 
     try:
         await session.prompt(text)
@@ -664,9 +673,11 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         except Exception:
             pass
     finally:
+        collector.finalize()
         save_session(chat_id, session)
         await streamer.finalize()
         session.unsubscribe(streamer.on_event)
+        session.unsubscribe(collector.on_event)
 
 
 # -- application builder ---------------------------------------------------

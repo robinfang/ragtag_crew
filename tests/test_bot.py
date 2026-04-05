@@ -660,6 +660,9 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         update = FakeUpdate(chat_id=100, text="hello", placeholder=placeholder)
         session = SimpleNamespace(
             is_busy=False,
+            model="openai/GLM-5.1",
+            tool_preset="coding",
+            enabled_skills=[],
             prompt=AsyncMock(),
             subscribe=lambda cb: None,
             unsubscribe=lambda cb: None,
@@ -684,6 +687,9 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         update = FakeUpdate(chat_id=100, text="hello", placeholder=placeholder)
         session = SimpleNamespace(
             is_busy=False,
+            model="openai/GLM-5.1",
+            tool_preset="coding",
+            enabled_skills=[],
             prompt=AsyncMock(side_effect=RuntimeError("broken")),
             subscribe=lambda cb: None,
             unsubscribe=lambda cb: None,
