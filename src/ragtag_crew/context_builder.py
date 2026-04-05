@@ -50,6 +50,20 @@ def build_system_prompt(
     if base_system_prompt:
         parts.append(base_system_prompt)
 
+    if settings.planning_enabled:
+        _append_section(
+            parts,
+            "Planning Protocol",
+            (
+                "For non-trivial tasks (requiring 3+ steps, touching multiple files, or involving design decisions):\n"
+                "1. Before taking any action, output a brief numbered plan.\n"
+                "2. After the plan, wait for the user to confirm or adjust before proceeding.\n"
+                "3. Once confirmed, execute step by step.\n"
+                "4. If new information changes the plan, update it and inform the user.\n\n"
+                "For trivial tasks (simple question, single file edit, quick lookup), proceed directly."
+            ),
+        )
+
     _append_section(parts, "Project Context", load_project_context())
     _append_section(parts, "User Context", load_user_context())
     _append_section(parts, "Long-term Memory Index", load_memory_index())

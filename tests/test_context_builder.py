@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
+from unittest.mock import patch
 
 from ragtag_crew.config import settings
 from ragtag_crew.context_builder import build_system_prompt
@@ -47,7 +48,8 @@ class ContextBuilderTests(unittest.TestCase):
                     session_summary="worked on context layering",
                 )
 
-        self.assertLess(prompt.index("base system"), prompt.index("## Project Context"))
+        self.assertLess(prompt.index("base system"), prompt.index("## Planning Protocol"))
+        self.assertLess(prompt.index("## Planning Protocol"), prompt.index("## Project Context"))
         self.assertLess(prompt.index("## Project Context"), prompt.index("## User Context"))
         self.assertLess(prompt.index("## User Context"), prompt.index("## Long-term Memory Index"))
         self.assertLess(prompt.index("## Long-term Memory Index"), prompt.index("## Active Skills"))
@@ -63,6 +65,23 @@ class ContextBuilderTests(unittest.TestCase):
 
         self.assertTrue(prompt.startswith("base system"))
         self.assertIn("## External Result Policy", prompt)
+
+    def test_planning_protocol_included_when_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with context_files(root), patch("ragtag_crew.context_builder.settings.planning_enabled", True):
+                prompt = build_system_prompt(base_system_prompt="base")
+
+        self.assertIn("## Planning Protocol", prompt)
+        self.assertIn("numbered plan", prompt)
+
+    def test_planning_protocol_skipped_when_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with context_files(root), patch("ragtag_crew.context_builder.settings.planning_enabled", False):
+                prompt = build_system_prompt(base_system_prompt="base")
+
+        self.assertNotIn("## Planning Protocol", prompt)
 
 
 if __name__ == "__main__":

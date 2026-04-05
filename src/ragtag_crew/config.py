@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     # Agent
     working_dir: str = "."
     default_tool_preset: str = "coding"
+    planning_enabled: bool = True
     llm_timeout: int = 300
     llm_chunk_timeout: int = 30
     turn_timeout: int = 360
