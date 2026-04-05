@@ -66,6 +66,10 @@ class Settings(BaseSettings):
     fd_enabled: bool = False
     fd_command: str = "fd"
 
+    # Trace
+    trace_enabled: bool = True
+    trace_dir: str = "data/traces"
+
     # Logging
     log_dir: str = "logs"
     log_level: str = "INFO"
