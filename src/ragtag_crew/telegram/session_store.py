@@ -80,6 +80,7 @@ def load_session(chat_id: int, *, default_system_prompt: str) -> AgentSession | 
         recent_message_count=payload.get("recent_message_count", 0),
         browser_mode=payload.get("browser_mode", settings.browser_mode_default),
         browser_attached_confirmed=payload.get("browser_attached_confirmed", False),
+        planning_enabled=payload.get("planning_enabled", settings.planning_enabled),
     )
     session.messages = payload.get("messages", [])
     return session
@@ -99,6 +100,7 @@ def save_session(chat_id: int, session: AgentSession) -> None:
         "recent_message_count": session.recent_message_count,
         "browser_mode": session.browser_mode,
         "browser_attached_confirmed": session.browser_attached_confirmed,
+        "planning_enabled": session.planning_enabled,
         "messages": session.messages,
         "last_active_at": time.time(),
     }

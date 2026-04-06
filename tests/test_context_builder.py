@@ -4,7 +4,6 @@ import tempfile
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
-from unittest.mock import patch
 
 from ragtag_crew.config import settings
 from ragtag_crew.context_builder import build_system_prompt
@@ -69,8 +68,8 @@ class ContextBuilderTests(unittest.TestCase):
     def test_planning_protocol_included_when_enabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            with context_files(root), patch("ragtag_crew.context_builder.settings.planning_enabled", True):
-                prompt = build_system_prompt(base_system_prompt="base")
+            with context_files(root):
+                prompt = build_system_prompt(base_system_prompt="base", planning_enabled=True)
 
         self.assertIn("## Planning Protocol", prompt)
         self.assertIn("numbered plan", prompt)
@@ -78,8 +77,8 @@ class ContextBuilderTests(unittest.TestCase):
     def test_planning_protocol_skipped_when_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            with context_files(root), patch("ragtag_crew.context_builder.settings.planning_enabled", False):
-                prompt = build_system_prompt(base_system_prompt="base")
+            with context_files(root):
+                prompt = build_system_prompt(base_system_prompt="base", planning_enabled=False)
 
         self.assertNotIn("## Planning Protocol", prompt)
 

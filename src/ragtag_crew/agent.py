@@ -56,6 +56,7 @@ class AgentSession:
         recent_message_count: int = 0,
         browser_mode: str = "isolated",
         browser_attached_confirmed: bool = False,
+        planning_enabled: bool | None = None,
     ):
         self.model = model
         self.tools = tools
@@ -68,6 +69,7 @@ class AgentSession:
         self.recent_message_count = recent_message_count
         self.browser_mode = browser_mode
         self.browser_attached_confirmed = browser_attached_confirmed
+        self.planning_enabled = planning_enabled if planning_enabled is not None else settings.planning_enabled
         self.messages: list[dict[str, Any]] = []
 
         self._callbacks: list[EventCallback] = []
@@ -218,6 +220,7 @@ class AgentSession:
             enabled_skills=self.enabled_skills,
             session_prompt=self.session_prompt,
             session_summary=self.session_summary,
+            planning_enabled=self.planning_enabled,
         )
         if system_prompt:
             msgs.append({"role": "system", "content": system_prompt})

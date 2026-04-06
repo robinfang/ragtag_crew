@@ -42,6 +42,7 @@ def build_system_prompt(
     enabled_skills: list[str] | None = None,
     session_prompt: str = "",
     session_summary: str = "",
+    planning_enabled: bool = True,
 ) -> str:
     """Build the final system prompt for one model call."""
     parts: list[str] = []
@@ -50,7 +51,7 @@ def build_system_prompt(
     if base_system_prompt:
         parts.append(base_system_prompt)
 
-    if settings.planning_enabled:
+    if planning_enabled:
         _append_section(
             parts,
             "Planning Protocol",

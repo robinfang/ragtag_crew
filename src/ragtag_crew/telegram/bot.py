@@ -103,6 +103,7 @@ def _is_authorized(user_id: int) -> bool:
 _BOT_COMMANDS = [
     BotCommand("new", "清空当前会话"),
     BotCommand("cancel", "取消当前回复"),
+    BotCommand("plan", "规划模式 on / off"),
     BotCommand("model", "查看 / 切换模型"),
     BotCommand("tools", "查看 / 切换工具预设"),
     BotCommand("skills", "列出可用技能"),
@@ -186,6 +187,40 @@ async def _cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
     session.abort()
     log.info("[chat %s] /cancel — abort signalled", chat_id)
+
+
+async def _cmd_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_authorized(update.effective_user.id):
+        log.warning("Unauthorized /plan from user_id=%s", update.effective_user.id)
+        return
+    chat_id = update.effective_chat.id
+    session = _get_session(chat_id)
+    args = context.args or []
+
+    if not args:
+        status = "ON" if session.planning_enabled else "OFF"
+        mode = "Plan" if session.planning_enabled else "Build"
+        log.debug("[chat %s] /plan show — %s", chat_id, status)
+        await update.message.reply_text(
+            f"Current mode: {mode}\n"
+            f"Planning: {status}\n\n"
+            "Usage: /plan on | /plan off"
+        )
+        return
+
+    action = args[0].lower()
+    if action == "on":
+        session.planning_enabled = True
+        save_session(chat_id, session)
+        log.info("[chat %s] /plan on", chat_id)
+        await update.message.reply_text("Plan mode ON — will output numbered plan before acting on non-trivial tasks.")
+    elif action == "off":
+        session.planning_enabled = False
+        save_session(chat_id, session)
+        log.info("[chat %s] /plan off", chat_id)
+        await update.message.reply_text("Build mode ON — will proceed directly without planning.")
+    else:
+        await update.message.reply_text("Usage: /plan on | /plan off")
 
 
 async def _cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -733,6 +768,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("start", _cmd_start))
     app.add_handler(CommandHandler("new", _cmd_new))
     app.add_handler(CommandHandler("cancel", _cmd_cancel))
+    app.add_handler(CommandHandler("plan", _cmd_plan))
     app.add_handler(CommandHandler("model", _cmd_model))
     app.add_handler(CommandHandler("tools", _cmd_tools))
     app.add_handler(CommandHandler("skills", _cmd_skills))
