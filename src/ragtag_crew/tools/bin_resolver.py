@@ -159,14 +159,19 @@ def _download_binary(name: str, info: DownloadInfo) -> Path:
 
 
 def _extract_binary(archive: Path, binary_name: str, dest: Path) -> None:
-    if archive.suffix == ".zip":
+    try:
         with zipfile.ZipFile(archive, "r") as zf:
             _extract_from_zip(zf, binary_name, dest)
-    else:
-        import tarfile
+            return
+    except FileNotFoundError:
+        raise
+    except (zipfile.BadZipFile, Exception):
+        pass
 
-        with tarfile.open(archive, "r:*") as tf:
-            _extract_from_tar(tf, binary_name, dest)
+    import tarfile
+
+    with tarfile.open(archive, "r:*") as tf:
+        _extract_from_tar(tf, binary_name, dest)
 
 
 def _extract_from_zip(zf: zipfile.ZipFile, binary_name: str, dest: Path) -> None:
