@@ -164,7 +164,10 @@ def _start_file_watcher() -> None:
         try:
             for _changes in watch(watch_path, stop_event=threading.Event()):
                 logging.getLogger(__name__).info("[dev] file changed, restarting...")
-                os.execv(sys.executable, [sys.executable] + sys.argv)
+                os.execv(
+                    sys.executable,
+                    [sys.executable, "-m", "ragtag_crew.main"] + sys.argv[1:],
+                )
         except Exception:
             pass
 
