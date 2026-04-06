@@ -115,6 +115,7 @@ async def stream_chat(
 
     result = LLMResponse()
     started_at = time.monotonic()
+    on_delta_total = 0.0
     # Accumulators for streaming tool-call deltas.
     tc_index_map: dict[int, dict[str, str]] = {}  # index -> {id, name, args_json}
     stream_iter = response.__aiter__()
@@ -131,7 +132,7 @@ async def stream_chat(
                 await aclose()
             break
 
-        elapsed = time.monotonic() - started_at
+        elapsed = time.monotonic() - started_at - on_delta_total
         remaining = settings.llm_timeout - elapsed
         if remaining <= 0:
             aclose = getattr(response, "aclose", None)
@@ -166,7 +167,9 @@ async def stream_chat(
             result.content += delta.content
             received_content = True
             if on_delta:
+                t0 = time.monotonic()
                 await on_delta(delta.content)
+                on_delta_total += time.monotonic() - t0
 
         # --- tool calls (streamed in fragments) ---
         if delta.tool_calls:

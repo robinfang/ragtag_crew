@@ -152,5 +152,26 @@ class StreamChatTimeoutTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.tool_calls[0].name, "fn")
 
 
+    async def test_on_delta_delay_not_counted_in_timeout(self) -> None:
+        """on_delta 回调的等待时间不应计入 llm_timeout。"""
+        async def _slow_delta(text: str) -> None:
+            import asyncio
+            await asyncio.sleep(0.1)
+
+        # llm_timeout=0.05 < on_delta sleep 0.1，但不应超时
+        fake_stream = _FakeStream([_chunk("hello")], delays=[0.0])
+
+        with patch("ragtag_crew.llm.settings.llm_timeout", 0.05), patch(
+            "ragtag_crew.llm.settings.llm_chunk_timeout", 0
+        ), patch("ragtag_crew.llm.litellm.acompletion", return_value=fake_stream):
+            result = await stream_chat(
+                model="openai/GLM-5.1",
+                messages=[{"role": "user", "content": "hi"}],
+                on_delta=_slow_delta,
+            )
+
+        self.assertEqual(result.content, "hello")
+
+
 if __name__ == "__main__":
     unittest.main()
