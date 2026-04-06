@@ -72,6 +72,22 @@ class CompletionProviderOptionsTests(unittest.TestCase):
 
 
 class StreamChatTimeoutTests(unittest.IsolatedAsyncioTestCase):
+    async def test_ttfb_timeout_raises_without_partial(self) -> None:
+        async def _hang(**_kwargs):  # type: ignore[no-untyped-def]
+            import asyncio
+            await asyncio.sleep(999)
+
+        with patch("ragtag_crew.llm.settings.llm_timeout", 0.01), patch(
+            "ragtag_crew.llm.litellm.acompletion", side_effect=_hang
+        ):
+            with self.assertRaises(LLMTimeoutError) as ctx:
+                await stream_chat(
+                    model="openai/GLM-5.1",
+                    messages=[{"role": "user", "content": "hi"}],
+                )
+
+        self.assertIsNone(ctx.exception.partial_response)
+
     async def test_chunk_timeout_keeps_partial_content(self) -> None:
         fake_stream = _FakeStream([_chunk("hello")], delays=[0.05])
 

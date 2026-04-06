@@ -105,7 +105,13 @@ async def stream_chat(
     if tools:
         kwargs["tools"] = tools
 
-    response = await litellm.acompletion(**kwargs)
+    try:
+        response = await asyncio.wait_for(
+            litellm.acompletion(**kwargs),
+            timeout=settings.llm_timeout,
+        )
+    except asyncio.TimeoutError:
+        raise LLMTimeoutError(settings.llm_timeout) from None
 
     result = LLMResponse()
     started_at = time.monotonic()
