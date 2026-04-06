@@ -152,8 +152,8 @@ def _start_file_watcher() -> None:
     import threading
     from watchfiles import watch
 
-    src_dir = Path(__file__).resolve().parent.parent.parent
-    watch_path = src_dir / "ragtag_crew"
+    src_dir = Path(__file__).resolve().parent
+    watch_path = src_dir
     if not watch_path.is_dir():
         return
 
