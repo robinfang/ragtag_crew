@@ -39,6 +39,17 @@ def _chunk(content: str):
     return SimpleNamespace(choices=[SimpleNamespace(delta=delta)])
 
 
+def _tool_chunk(name: str = "fn", args: str = "{}"):
+    """Simulate a tool_call streaming chunk."""
+    tc = SimpleNamespace(
+        index=0,
+        id="call_1",
+        function=SimpleNamespace(name=name, arguments=args),
+    )
+    delta = SimpleNamespace(content=None, tool_calls=[tc])
+    return SimpleNamespace(choices=[SimpleNamespace(delta=delta)])
+
+
 class CompletionProviderOptionsTests(unittest.TestCase):
     def test_glm_model_uses_glm_key_and_coding_endpoint(self) -> None:
         with patch("ragtag_crew.llm.settings.glm_api_key", "glm-key"), patch(
@@ -115,6 +126,30 @@ class StreamChatTimeoutTests(unittest.IsolatedAsyncioTestCase):
                 )
 
         self.assertEqual(ctx.exception.partial_response.content, "hello")
+
+    async def test_content_to_tool_call_transition_bypasses_chunk_timeout(self) -> None:
+        """content→tool_call 过渡期不受 chunk_timeout 限制。
+
+        场景：模型先输出 content 文本，然后静默一段时间（超过 chunk_timeout）
+        后才开始 tool_call。预期：不触发 LLMChunkTimeoutError，正常返回。
+        """
+        # content chunk 立即返回，tool_call chunk 延迟超过 chunk_timeout
+        fake_stream = _FakeStream(
+            [_chunk("I will call the tool"), _tool_chunk("fn", '{"x": 1}')],
+            delays=[0.0, 0.05],  # 0.05s > chunk_timeout=0.01s
+        )
+
+        with patch("ragtag_crew.llm.settings.llm_timeout", 2), patch(
+            "ragtag_crew.llm.settings.llm_chunk_timeout", 0.01
+        ), patch("ragtag_crew.llm.litellm.acompletion", return_value=fake_stream):
+            result = await stream_chat(
+                model="openai/GLM-5.1",
+                messages=[{"role": "user", "content": "hi"}],
+            )
+
+        self.assertEqual(result.content, "I will call the tool")
+        self.assertEqual(len(result.tool_calls), 1)
+        self.assertEqual(result.tool_calls[0].name, "fn")
 
 
 if __name__ == "__main__":

@@ -118,6 +118,11 @@ async def stream_chat(
     # Accumulators for streaming tool-call deltas.
     tc_index_map: dict[int, dict[str, str]] = {}  # index -> {id, name, args_json}
     stream_iter = response.__aiter__()
+    # 用于豁免 chunk_timeout 的状态追踪：
+    # 收到 content 后等待 tool_calls 时，模型可能需要较长时间生成 tool_call JSON，
+    # 此阶段服务端不发送任何保活字节，不能用 chunk_timeout 判断超时。
+    received_content = False
+    received_tool_call = False
 
     while True:
         if should_abort and should_abort():
@@ -134,8 +139,12 @@ async def stream_chat(
                 await aclose()
             raise LLMTimeoutError(settings.llm_timeout, partial_response=result)
 
+        # content→tool_call 过渡期：模型已输出文本但尚未开始 tool_call 时，
+        # 服务端可能静默数十秒（与 context 大小正相关）。此阶段跳过 chunk_timeout，
+        # 只保留整体 llm_timeout 兜底，避免误杀正常推理。
+        in_transition = received_content and not received_tool_call
         chunk_wait = remaining
-        if settings.llm_chunk_timeout > 0:
+        if settings.llm_chunk_timeout > 0 and not in_transition:
             chunk_wait = min(chunk_wait, settings.llm_chunk_timeout)
 
         try:
@@ -155,11 +164,13 @@ async def stream_chat(
         # --- text content ---
         if delta.content:
             result.content += delta.content
+            received_content = True
             if on_delta:
                 await on_delta(delta.content)
 
         # --- tool calls (streamed in fragments) ---
         if delta.tool_calls:
+            received_tool_call = True
             for tc_delta in delta.tool_calls:
                 idx = tc_delta.index if tc_delta.index is not None else 0
                 if idx not in tc_index_map:
