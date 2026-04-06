@@ -36,3 +36,7 @@ class TurnTimeoutError(RagtagCrewError, TimeoutError):
     def __init__(self, timeout: int):
         super().__init__(f"Agent turn exceeded {timeout}s limit.")
         self.timeout = timeout
+
+
+class UserAbortedError(RagtagCrewError):
+    """Raised when the user cancels an in-progress agent turn."""

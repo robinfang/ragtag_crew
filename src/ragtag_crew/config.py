@@ -10,6 +10,7 @@ class Settings(BaseSettings):
 
     # LLM
     default_model: str = "openai/GLM-5.1"
+    available_models: str = "openai/GLM-5.1,openai/GLM-5-Turbo"
     anthropic_api_key: str = ""
     openai_api_key: str = ""
     openai_api_base: str = ""
@@ -19,6 +20,7 @@ class Settings(BaseSettings):
     # Agent
     working_dir: str = "."
     default_tool_preset: str = "coding"
+    dev_mode: bool = False
     planning_enabled: bool = True
     llm_timeout: int = 300
     llm_chunk_timeout: int = 30
@@ -92,6 +94,11 @@ class Settings(BaseSettings):
             except ValueError:
                 pass
         return ids
+
+    def get_available_models(self) -> list[str]:
+        if not self.available_models.strip():
+            return []
+        return [m.strip() for m in self.available_models.split(",") if m.strip()]
 
 
 settings = Settings()

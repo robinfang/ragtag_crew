@@ -75,6 +75,10 @@ class TelegramStreamer:
             case "agent_end":
                 await self._flush()
 
+            case "cancelled":
+                self.buffer += "\n\n⚠️ 已取消"
+                await self._flush()
+
             case "error":
                 err = kwargs.get("error", "Unknown error")
                 self.buffer += f"\n\n❌ Error: {err}"

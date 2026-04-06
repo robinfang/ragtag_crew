@@ -13,6 +13,7 @@ dependencies = [
     "litellm>=1.60.0",
     "mcp>=1.17.0",
     "pydantic-settings>=2.0",
+    "watchfiles>=0.20",
 ]
 
 [project.scripts]

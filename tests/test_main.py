@@ -115,6 +115,32 @@ class MainCliTests(unittest.TestCase):
         finally:
             main_module.settings.log_level = original
 
+    def test_cli_dev_sets_dev_mode_and_debug(self) -> None:
+        original_dev = main_module.settings.dev_mode
+        original_log = main_module.settings.log_level
+        try:
+            main_module._apply_cli_overrides(
+                main_module.build_arg_parser().parse_args(["--dev"])
+            )
+            self.assertTrue(main_module.settings.dev_mode)
+            self.assertEqual(main_module.settings.log_level, "DEBUG")
+        finally:
+            main_module.settings.dev_mode = original_dev
+            main_module.settings.log_level = original_log
+
+    def test_cli_dev_does_not_override_explicit_log_level(self) -> None:
+        original_dev = main_module.settings.dev_mode
+        original_log = main_module.settings.log_level
+        try:
+            main_module._apply_cli_overrides(
+                main_module.build_arg_parser().parse_args(["--dev", "--log-level", "WARNING"])
+            )
+            self.assertTrue(main_module.settings.dev_mode)
+            self.assertEqual(main_module.settings.log_level, "WARNING")
+        finally:
+            main_module.settings.dev_mode = original_dev
+            main_module.settings.log_level = original_log
+
     def test_cli_no_override_when_args_missing(self) -> None:
         original_wd = main_module.settings.working_dir
         original_model = main_module.settings.default_model

@@ -16,6 +16,7 @@ from telegram.ext import (
 
 from ragtag_crew.agent import AgentSession
 from ragtag_crew.config import settings
+from ragtag_crew.errors import UserAbortedError
 from ragtag_crew.external.browser_agent import (
     connect_attached_browser,
     disconnect_attached_browser,
@@ -101,6 +102,7 @@ def _is_authorized(user_id: int) -> bool:
 
 _BOT_COMMANDS = [
     BotCommand("new", "清空当前会话"),
+    BotCommand("cancel", "取消当前回复"),
     BotCommand("model", "查看 / 切换模型"),
     BotCommand("tools", "查看 / 切换工具预设"),
     BotCommand("skills", "列出可用技能"),
@@ -173,6 +175,19 @@ async def _cmd_new(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("Session cleared.")
 
 
+async def _cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_authorized(update.effective_user.id):
+        log.warning("Unauthorized /cancel from user_id=%s", update.effective_user.id)
+        return
+    chat_id = update.effective_chat.id
+    session = _get_session(chat_id)
+    if not session.is_busy:
+        await update.message.reply_text("No active task to cancel.")
+        return
+    session.abort()
+    log.info("[chat %s] /cancel — abort signalled", chat_id)
+
+
 async def _cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_authorized(update.effective_user.id):
         log.warning("Unauthorized /model from user_id=%s", update.effective_user.id)
@@ -181,8 +196,19 @@ async def _cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     session = _get_session(chat_id)
     args = (context.args or [])
     if not args:
+        models = settings.get_available_models()
+        lines = [f"Current model: {session.model}"]
+        if models:
+            lines.append("")
+            lines.append("Available models:")
+            for m in models:
+                marker = " ←" if m == session.model else ""
+                lines.append(f"• {m}{marker}")
+        lines.append("")
+        lines.append("Usage: /model <model-name>")
+        text = "\n".join(lines)
         log.debug("[chat %s] /model show — current: %s", chat_id, session.model)
-        await update.message.reply_text(f"Current model: {session.model}\n\nUsage: /model <litellm-model-name>")
+        await update.message.reply_text(text)
         return
     new_model = args[0]
     previous_model = session.model
@@ -666,6 +692,8 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     try:
         await session.prompt(text)
+    except UserAbortedError:
+        pass
     except Exception as exc:
         log.exception("prompt() failed")
         try:
@@ -704,6 +732,7 @@ def build_app() -> Application:
 
     app.add_handler(CommandHandler("start", _cmd_start))
     app.add_handler(CommandHandler("new", _cmd_new))
+    app.add_handler(CommandHandler("cancel", _cmd_cancel))
     app.add_handler(CommandHandler("model", _cmd_model))
     app.add_handler(CommandHandler("tools", _cmd_tools))
     app.add_handler(CommandHandler("skills", _cmd_skills))

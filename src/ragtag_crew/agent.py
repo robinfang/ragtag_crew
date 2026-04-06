@@ -14,7 +14,7 @@ from typing import Any, Callable, Awaitable
 
 from ragtag_crew.config import settings
 from ragtag_crew.context_builder import build_system_prompt
-from ragtag_crew.errors import LLMChunkTimeoutError, LLMTimeoutError, TurnTimeoutError
+from ragtag_crew.errors import LLMChunkTimeoutError, LLMTimeoutError, TurnTimeoutError, UserAbortedError
 from ragtag_crew.external.browser_agent import browser_execution_context
 from ragtag_crew.llm import stream_chat, LLMResponse, ToolCall
 from ragtag_crew.session_summary import compact_history
@@ -38,6 +38,7 @@ class AgentSession:
         tool_execution_start(tool_call=ToolCall)
         tool_execution_end(tool_call=ToolCall, result=str)
         turn_end(turn=int)
+        cancelled()
         agent_end(content=str)
         error(error=Exception)
     """
@@ -145,6 +146,9 @@ class AgentSession:
             )
         except (LLMTimeoutError, LLMChunkTimeoutError):
             raise
+        except UserAbortedError:
+            await self._emit("cancelled")
+            raise
         except asyncio.TimeoutError as exc:
             self._abort_event.set()
             timeout_error = TurnTimeoutError(settings.turn_timeout)
@@ -221,6 +225,8 @@ class AgentSession:
         return msgs
 
     async def _execute_tool(self, tc: ToolCall) -> str:
+        if self._abort_event.is_set():
+            return "ABORTED"
         try:
             tool = get_tool(tc.name)
         except KeyError:
@@ -230,10 +236,13 @@ class AgentSession:
                 self.browser_mode,
                 attached_confirmed=self.browser_attached_confirmed,
             ):
-                return await tool.execute(**tc.arguments)
+                result = await tool.execute(**tc.arguments)
         except Exception as exc:
             log.exception("Tool %s execution failed", tc.name)
-            return f"ERROR: {type(exc).__name__}: {exc}"
+            result = f"ERROR: {type(exc).__name__}: {exc}"
+        if self._abort_event.is_set():
+            return "ABORTED"
+        return result
 
     async def _run_loop(self) -> str:
         tool_schemas = build_tool_schemas(self.tools) if self.tools else None
@@ -241,7 +250,7 @@ class AgentSession:
 
         for turn in range(1, settings.max_turns + 1):
             if self._abort_event.is_set():
-                break
+                raise UserAbortedError()
 
             await self._emit("turn_start", turn=turn)
             await self._emit("message_start")
@@ -269,7 +278,7 @@ class AgentSession:
 
             if self._abort_event.is_set():
                 await self._emit("turn_end", turn=turn)
-                break
+                raise UserAbortedError()
 
             if not response.tool_calls:
                 await self._emit("turn_end", turn=turn)
@@ -277,7 +286,7 @@ class AgentSession:
 
             for tc in response.tool_calls:
                 if self._abort_event.is_set():
-                    break
+                    raise UserAbortedError()
 
                 await self._emit("tool_execution_start", tool_call=tc)
                 result = await self._execute_tool(tc)

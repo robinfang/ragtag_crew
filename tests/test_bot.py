@@ -739,7 +739,7 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
 
         cleanup.assert_called_once()
         init_external.assert_called_once()
-        self.assertEqual(len(added_handlers), 12)
+        self.assertEqual(len(added_handlers), 13)
         self.assertIsNotNone(app)
         self.assertIsNotNone(app.post_init)
 
@@ -757,7 +757,7 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
 
     def test_bot_commands_match_handlers(self) -> None:
         handler_commands = [
-            "start", "new", "model", "tools", "skills",
+            "start", "new", "cancel", "model", "tools", "skills",
             "skill", "memory", "context", "mcp", "ext", "browser",
         ]
         for cmd in handler_commands:
