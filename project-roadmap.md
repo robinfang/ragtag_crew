@@ -28,6 +28,12 @@
 - `PROJECT.md` / `USER.local.md` / `MEMORY.md` 分层上下文已落地
 - 最小 `session_summary` 与 `/context` 已具备
 - 最小 `/memory` 闭环已具备
+- `/cancel` 中断命令已可用（用户取消 vs 超时区分提示）
+- 可用模型列表（`/model` 无参数列出预设模型）
+- 开发模式（`--dev` 文件监听自动重启 + `--repl` 本地终端交互）
+- 执行轨迹收集（TraceCollector，JSONL 格式）
+- Planning 机制（system prompt 注入规划协议）
+- 固定 OpenAPI 工具接入（paper-search + paper-collector）
 
 这说明项目已经不再处于“从零起步”的阶段，而是进入：
 
@@ -268,23 +274,23 @@
 
 ## 6. 里程碑建议
 
-### M1：统一外部工具底座
+### M1：统一外部工具底座 ✅
 
 - 项目能承载多来源工具，而不是只有本地工具
 
-### M2：稳定联网搜索
+### M2：稳定联网搜索 ✅
 
 - agent 可以稳定做互联网搜索，不依赖网页抓取 hack
 
-### M3：Windows 本地搜索增强
+### M3：Windows 本地搜索增强 ✅
 
 - 在 Windows 环境下能利用 `Everything` 做高效本地检索
 
-### M4：可用的 `MCP client`
+### M4：可用的 `MCP client` ✅
 
 - 可以连接一个或多个外部 `MCP` server 并稳定调用工具
 
-### M5：可用的固定 `OpenAPI` 工具
+### M5：可用的固定 `OpenAPI` 工具 ✅
 
 - 可以稳定调用少量预配置 API
 
@@ -292,9 +298,13 @@
 
 - 搜索结果、`MCP` 结果、`OpenAPI` 结果都能被当前会话继续利用
 
-### M7：控制与诊断能力可用
+### M7：控制与诊断能力可用（部分完成）
 
-- 用户能看见系统状态、能力来源和失败原因
+- ✅ 执行轨迹收集（TraceCollector，JSONL）
+- ✅ /cancel 中断 + /model 模型列表
+- ✅ 开发模式（--dev / --repl）
+- ✅ Planning 机制
+- 待做：env bootstrap、两阶段调用、历史查询 CLI
 
 ### M8：上下文系统高级能力成熟
 

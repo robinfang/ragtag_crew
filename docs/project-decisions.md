@@ -10,6 +10,18 @@
 
 ## 日志规范
 
-- **INFO**：所有改变状态的命令（/new, /model, /tools, /skill, /memory, /context, /browser, /ext, /mcp）
+- **INFO**：所有改变状态的命令（/new, /cancel, /model, /tools, /skill, /memory, /context, /browser, /ext, /mcp）
 - **WARNING**：未授权访问 + 操作失败
 - **DEBUG**：只读查询命令 + 消息入口（截断至 80 字符）
+
+## Agent 控制
+
+- **用户取消 vs 超时**：`UserAbortedError` 与 `TurnTimeoutError` 分开，Telegram 显示不同提示（「已取消」vs 错误信息）
+- **abort 中断粒度**：`_run_loop` 每轮检查 + `_execute_tool` 执行前后检查 + `stream_chat` 每个 chunk 前后检查。消息历史保留残缺内容不清理
+- **可用模型列表**：`config.py` 中 `available_models` 逗号分隔，`/model` 无参数时列出
+
+## 开发模式
+
+- **`--dev`**：自动设置 `dev_mode=True` + `log_level=DEBUG`，启动 watchfiles 监听 `src/ragtag_crew/**/*.py`，变更时 `os.execv` 重启。显式 `--log-level` 优先于 `--dev`
+- **`--repl`**：不连 Telegram，终端直接对话 AgentSession，支持 /new /model /cancel /tools /quit
+- **不放宽超时**：开发模式保持与生产一致的超时配置，避免行为差异
