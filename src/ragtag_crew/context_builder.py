@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ragtag_crew.config import settings
+from ragtag_crew.env_bootstrap import load_workspace_snapshot
 from ragtag_crew.skill_loader import render_skill_prompt
 
 
@@ -70,6 +71,7 @@ def build_system_prompt(
         )
 
     _append_section(parts, "Project Context", load_project_context())
+    _append_section(parts, "Workspace Snapshot", load_workspace_snapshot())
     _append_section(parts, "User Context", load_user_context())
     _append_section(parts, "Long-term Memory Index", load_memory_index())
 

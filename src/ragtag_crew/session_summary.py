@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
+
+_SUMMARY_TEXT_LIMIT = 500
+_TOOL_ARG_KEYS = ("path", "file", "file_path", "query", "pattern", "url", "search")
 
 
 def compact_history(
@@ -29,18 +33,37 @@ def _merge_summary(
     *,
     max_chars: int,
 ) -> str:
+    entries = [_summarize_message(message) for message in messages]
+    entries = [entry for entry in entries if entry]
+
     parts: list[str] = []
     earlier = previous_summary.strip()
     if earlier:
-        earlier = _clip(earlier, max_chars // 2)
         parts.append(f"Earlier summarized context:\n{earlier}")
 
-    entries = [_summarize_message(message) for message in messages]
-    entries = [entry for entry in entries if entry]
     if entries:
-        parts.append("Recently compacted history:\n" + "\n".join(f"- {entry}" for entry in entries))
+        parts.append(
+            "Recently compacted history:\n"
+            + "\n".join(f"- {entry}" for entry in entries)
+        )
 
-    return _clip("\n\n".join(parts).strip(), max_chars)
+    combined = "\n\n".join(parts).strip()
+    if len(combined) <= max_chars:
+        return combined
+
+    combined = "\n\n".join(parts).strip()
+    if not entries:
+        return _clip(combined, max_chars)
+
+    new_part = parts[-1]
+    budget_for_older = max_chars - len(new_part) - 4
+    if budget_for_older > 0:
+        older_text = _clip("\n\n".join(parts[:-1]).strip(), budget_for_older)
+        combined = f"{older_text}\n\n{new_part}"
+    else:
+        combined = new_part
+
+    return _clip(combined, max_chars)
 
 
 def _summarize_message(message: dict[str, Any]) -> str:
@@ -56,10 +79,11 @@ def _summarize_message(message: dict[str, Any]) -> str:
             parts.append(f"Assistant response: {content}")
 
         tool_calls = message.get("tool_calls") or []
-        tool_names = [_tool_name(tool_call) for tool_call in tool_calls]
-        tool_names = [name for name in tool_names if name]
-        if tool_names:
-            parts.append(f"Assistant used tools: {', '.join(tool_names)}")
+        if tool_calls:
+            tool_labels = [_tool_call_label(tc) for tc in tool_calls]
+            tool_labels = [lbl for lbl in tool_labels if lbl]
+            if tool_labels:
+                parts.append("Assistant used tools: " + " → ".join(tool_labels))
 
         return " | ".join(parts)
 
@@ -87,6 +111,30 @@ def _summarize_message(message: dict[str, Any]) -> str:
         return f"{prefix}: {content}"
 
     return ""
+
+
+def _tool_call_label(tool_call: dict[str, Any]) -> str:
+    function = tool_call.get("function") or {}
+    name = function.get("name")
+    if not isinstance(name, str):
+        name = tool_call.get("name")
+    if not isinstance(name, str):
+        return ""
+    args_str = function.get("arguments", "") or ""
+    args: dict[str, Any] = {}
+    if isinstance(args_str, str):
+        try:
+            args = json.loads(args_str)
+        except (json.JSONDecodeError, ValueError):
+            args = {}
+    elif isinstance(args_str, dict):
+        args = args_str
+    highlights = [
+        f"{k}={_clip_text(str(args[k]), limit=60)}" for k in _TOOL_ARG_KEYS if k in args
+    ]
+    if highlights:
+        return f"{name}({', '.join(highlights)})"
+    return name
 
 
 def _tool_name(tool_call: dict[str, Any]) -> str:
@@ -117,7 +165,7 @@ def _extract_external_refs(value: Any, limit: int = 3) -> str:
     return ", ".join(urls)
 
 
-def _clip_text(value: Any, limit: int = 220) -> str:
+def _clip_text(value: Any, limit: int = _SUMMARY_TEXT_LIMIT) -> str:
     if not isinstance(value, str):
         return ""
     return _clip(" ".join(value.split()), limit)

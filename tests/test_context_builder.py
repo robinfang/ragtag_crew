@@ -37,7 +37,9 @@ class ContextBuilderTests(unittest.TestCase):
             (root / "MEMORY.md").write_text("memory index", encoding="utf-8")
             skills_root = root / "skills"
             skills_root.mkdir()
-            (skills_root / "review.md").write_text("# Review\n\nfind bugs first", encoding="utf-8")
+            (skills_root / "review.md").write_text(
+                "# Review\n\nfind bugs first", encoding="utf-8"
+            )
 
             with context_files(root):
                 prompt = build_system_prompt(
@@ -47,14 +49,33 @@ class ContextBuilderTests(unittest.TestCase):
                     session_summary="worked on context layering",
                 )
 
-        self.assertLess(prompt.index("base system"), prompt.index("## Planning Protocol"))
-        self.assertLess(prompt.index("## Planning Protocol"), prompt.index("## Project Context"))
-        self.assertLess(prompt.index("## Project Context"), prompt.index("## User Context"))
-        self.assertLess(prompt.index("## User Context"), prompt.index("## Long-term Memory Index"))
-        self.assertLess(prompt.index("## Long-term Memory Index"), prompt.index("## Active Skills"))
-        self.assertLess(prompt.index("## Active Skills"), prompt.index("## External Result Policy"))
-        self.assertLess(prompt.index("## External Result Policy"), prompt.index("## Session Prompt"))
-        self.assertLess(prompt.index("## Session Prompt"), prompt.index("## Session Summary"))
+        self.assertLess(
+            prompt.index("base system"), prompt.index("## Planning Protocol")
+        )
+        self.assertLess(
+            prompt.index("## Planning Protocol"), prompt.index("## Project Context")
+        )
+        self.assertLess(
+            prompt.index("## Project Context"), prompt.index("## Workspace Snapshot")
+        )
+        self.assertLess(
+            prompt.index("## Workspace Snapshot"), prompt.index("## User Context")
+        )
+        self.assertLess(
+            prompt.index("## User Context"), prompt.index("## Long-term Memory Index")
+        )
+        self.assertLess(
+            prompt.index("## Long-term Memory Index"), prompt.index("## Active Skills")
+        )
+        self.assertLess(
+            prompt.index("## Active Skills"), prompt.index("## External Result Policy")
+        )
+        self.assertLess(
+            prompt.index("## External Result Policy"), prompt.index("## Session Prompt")
+        )
+        self.assertLess(
+            prompt.index("## Session Prompt"), prompt.index("## Session Summary")
+        )
 
     def test_build_system_prompt_skips_missing_optional_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -69,7 +90,9 @@ class ContextBuilderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             with context_files(root):
-                prompt = build_system_prompt(base_system_prompt="base", planning_enabled=True)
+                prompt = build_system_prompt(
+                    base_system_prompt="base", planning_enabled=True
+                )
 
         self.assertIn("## Planning Protocol", prompt)
         self.assertIn("numbered plan", prompt)
@@ -78,7 +101,9 @@ class ContextBuilderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             with context_files(root):
-                prompt = build_system_prompt(base_system_prompt="base", planning_enabled=False)
+                prompt = build_system_prompt(
+                    base_system_prompt="base", planning_enabled=False
+                )
 
         self.assertNotIn("## Planning Protocol", prompt)
 

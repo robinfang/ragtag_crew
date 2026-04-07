@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -11,6 +13,8 @@ from typing import Any
 from ragtag_crew.config import settings
 from ragtag_crew.external.base import CapabilityStatus
 from ragtag_crew.tools import Tool, register_tool
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -39,7 +43,8 @@ def _normalize_server_config(raw: dict[str, Any]) -> MCPServerConfig:
         cwd=str(raw["cwd"]) if raw.get("cwd") else None,
         enabled=bool(raw.get("enabled", True)),
         tool_prefix=str(raw.get("tool_prefix", "")).strip(),
-        presets=tuple(str(item) for item in raw.get("presets", ["coding"])) or ("coding",),
+        presets=tuple(str(item) for item in raw.get("presets", ["coding"]))
+        or ("coding",),
     )
 
 
@@ -53,7 +58,9 @@ def load_mcp_server_configs() -> list[MCPServerConfig]:
     elif isinstance(data, list):
         servers = data
     else:
-        raise ValueError("MCP server config must be a list or an object with a 'servers' field")
+        raise ValueError(
+            "MCP server config must be a list or an object with a 'servers' field"
+        )
     return [_normalize_server_config(item) for item in servers]
 
 
@@ -67,7 +74,9 @@ def _tool_name(server: MCPServerConfig, remote_tool_name: str) -> str:
 
 
 def _tool_schema(remote_tool: Any) -> dict[str, Any]:
-    schema = getattr(remote_tool, "inputSchema", None) or getattr(remote_tool, "input_schema", None)
+    schema = getattr(remote_tool, "inputSchema", None) or getattr(
+        remote_tool, "input_schema", None
+    )
     return schema if isinstance(schema, dict) else {"type": "object", "properties": {}}
 
 
@@ -89,6 +98,22 @@ async def _list_tools_for_server(server: MCPServerConfig) -> list[Any]:
         env=server.env or None,
         cwd=_resolve_server_cwd(server),
     )
+    timeout = settings.external_tool_timeout
+    try:
+        return await asyncio.wait_for(
+            _list_tools_inner(params),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        raise TimeoutError(
+            f"MCP server '{server.name}' timed out after {timeout}s during tool discovery"
+        )
+
+
+async def _list_tools_inner(params: Any) -> list[Any]:
+    from mcp import ClientSession
+    from mcp.client.stdio import stdio_client
+
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
@@ -111,7 +136,9 @@ def _format_mcp_content_item(item: Any) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
-async def _call_tool_on_server(server: MCPServerConfig, remote_tool_name: str, arguments: dict[str, Any]) -> str:
+async def _call_tool_on_server(
+    server: MCPServerConfig, remote_tool_name: str, arguments: dict[str, Any]
+) -> str:
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
 
@@ -121,6 +148,24 @@ async def _call_tool_on_server(server: MCPServerConfig, remote_tool_name: str, a
         env=server.env or None,
         cwd=_resolve_server_cwd(server),
     )
+    timeout = settings.external_tool_timeout
+    try:
+        return await asyncio.wait_for(
+            _call_tool_inner(params, remote_tool_name, arguments),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        return f"ERROR: MCP server '{server.name}' timed out after {timeout}s."
+
+
+async def _call_tool_inner(
+    params: Any,
+    remote_tool_name: str,
+    arguments: dict[str, Any],
+) -> str:
+    from mcp import ClientSession
+    from mcp.client.stdio import stdio_client
+
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
@@ -139,7 +184,10 @@ async def _call_tool_on_server(server: MCPServerConfig, remote_tool_name: str, a
 
 def _build_registered_tool(server: MCPServerConfig, remote_tool: Any) -> Tool:
     remote_name = str(getattr(remote_tool, "name", "tool"))
-    description = str(getattr(remote_tool, "description", "")).strip() or f"MCP tool '{remote_name}' from {server.name}."
+    description = (
+        str(getattr(remote_tool, "description", "")).strip()
+        or f"MCP tool '{remote_name}' from {server.name}."
+    )
 
     async def _execute(**kwargs: Any) -> str:
         return await _call_tool_on_server(server, remote_name, kwargs)
@@ -184,8 +232,17 @@ async def discover_mcp_tools() -> list[CapabilityStatus]:
 
         registered_names: list[str] = []
         for remote_tool in remote_tools:
-            tool = register_tool(_build_registered_tool(server, remote_tool))
-            registered_names.append(tool.name)
+            try:
+                tool = register_tool(_build_registered_tool(server, remote_tool))
+                registered_names.append(tool.name)
+            except Exception as exc:
+                remote_name = getattr(remote_tool, "name", "<unknown>")
+                log.warning(
+                    "Failed to register MCP tool '%s' from server '%s': %s",
+                    remote_name,
+                    server.name,
+                    exc,
+                )
 
         statuses.append(
             CapabilityStatus(

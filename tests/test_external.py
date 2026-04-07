@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import tempfile
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 from ragtag_crew.config import settings
@@ -60,8 +62,12 @@ class EverythingTests(unittest.TestCase):
         self.assertEqual(command[-1], "main.py")
 
     def test_register_everything_tool_adds_tool_to_readonly_preset(self) -> None:
-        with temp_setting("everything_enabled", True), patch(
-            "ragtag_crew.external.everything.platform.system", return_value="Windows"
+        with (
+            temp_setting("everything_enabled", True),
+            patch(
+                "ragtag_crew.external.everything.platform.system",
+                return_value="Windows",
+            ),
         ):
             status = everything_module.register_everything_tool()
 
@@ -78,23 +84,36 @@ class BrowserAgentTests(unittest.IsolatedAsyncioTestCase):
         browser_module.disconnect_attached_browser()
 
     def test_register_browser_tools_adds_snapshot_to_readonly(self) -> None:
-        with temp_setting("agent_browser_enabled", True), temp_setting(
-            "agent_browser_command", "agent-browser"
-        ), patch("ragtag_crew.external.browser_agent._command_available", return_value=True):
+        with (
+            temp_setting("agent_browser_enabled", True),
+            temp_setting("agent_browser_command", "agent-browser"),
+            patch(
+                "ragtag_crew.external.browser_agent._command_available",
+                return_value=True,
+            ),
+        ):
             statuses = browser_module.register_browser_tools()
 
         readonly_names = [tool.name for tool in get_tools_for_preset("readonly")]
         self.assertIn("browser_snapshot", readonly_names)
-        self.assertEqual([status.key for status in statuses], ["browser-isolated", "browser-attached"])
+        self.assertEqual(
+            [status.key for status in statuses],
+            ["browser-isolated", "browser-attached"],
+        )
 
     def test_resolve_command_path_returns_real_executable(self) -> None:
-        with patch("ragtag_crew.external.browser_agent.shutil.which", return_value="C:/bin/agent-browser.cmd"):
+        with patch(
+            "ragtag_crew.external.browser_agent.shutil.which",
+            return_value="C:/bin/agent-browser.cmd",
+        ):
             resolved = browser_module._resolve_command_path("agent-browser")
 
         self.assertEqual(resolved, "C:/bin/agent-browser.cmd")
 
     def test_build_process_args_wraps_cmd_scripts(self) -> None:
-        process_args = browser_module._build_process_args(["C:/bin/agent-browser.cmd", "open", "https://example.com"])
+        process_args = browser_module._build_process_args(
+            ["C:/bin/agent-browser.cmd", "open", "https://example.com"]
+        )
 
         self.assertEqual(process_args[:2], ["cmd.exe", "/c"])
         self.assertEqual(process_args[2], "C:/bin/agent-browser.cmd")
@@ -106,19 +125,25 @@ class BrowserAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("outside the browser allowed domains policy", result)
 
     async def test_browser_click_requires_attached_confirmation(self) -> None:
-        with temp_setting("browser_attached_require_confirmation", True), browser_module.browser_execution_context(
-            "attached", attached_confirmed=False
+        with (
+            temp_setting("browser_attached_require_confirmation", True),
+            browser_module.browser_execution_context(
+                "attached", attached_confirmed=False
+            ),
         ):
             result = await browser_module._browser_click("#submit")
 
         self.assertIn("require explicit confirmation", result)
 
     async def test_connect_attached_browser_marks_runtime_connected(self) -> None:
-        with temp_setting("agent_browser_enabled", True), temp_setting(
-            "browser_attached_enabled", True
-        ), temp_setting("browser_attached_auto_connect", True), patch(
-            "ragtag_crew.external.browser_agent._run_command",
-            new=AsyncMock(return_value="tab list"),
+        with (
+            temp_setting("agent_browser_enabled", True),
+            temp_setting("browser_attached_enabled", True),
+            temp_setting("browser_attached_auto_connect", True),
+            patch(
+                "ragtag_crew.external.browser_agent._run_command",
+                new=AsyncMock(return_value="tab list"),
+            ),
         ):
             ok, detail = await browser_module.connect_attached_browser()
             state = browser_module.get_browser_runtime_state(session_mode="attached")
@@ -134,13 +159,17 @@ class BrowserAgentTests(unittest.IsolatedAsyncioTestCase):
             "button Continue",
             "OK",
         ]
-        with temp_setting("agent_browser_command", "agent-browser"), patch(
-            "ragtag_crew.external.browser_agent._command_available",
-            return_value=True,
-        ), patch(
-            "ragtag_crew.external.browser_agent._run_command",
-            new=AsyncMock(side_effect=side_effect),
-        ) as run_command:
+        with (
+            temp_setting("agent_browser_command", "agent-browser"),
+            patch(
+                "ragtag_crew.external.browser_agent._command_available",
+                return_value=True,
+            ),
+            patch(
+                "ragtag_crew.external.browser_agent._run_command",
+                new=AsyncMock(side_effect=side_effect),
+            ) as run_command,
+        ):
             ok, detail = await browser_module.run_browser_smoke_test()
 
         self.assertTrue(ok)
@@ -148,7 +177,9 @@ class BrowserAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(run_command.await_count, 4)
 
     async def test_run_browser_smoke_test_reports_missing_command(self) -> None:
-        with patch("ragtag_crew.external.browser_agent._command_available", return_value=False):
+        with patch(
+            "ragtag_crew.external.browser_agent._command_available", return_value=False
+        ):
             ok, detail = await browser_module.run_browser_smoke_test()
 
         self.assertFalse(ok)
@@ -177,7 +208,10 @@ class WebSearchTests(unittest.TestCase):
         self.assertEqual(results[0].url, "https://example.com/a")
 
     def test_register_web_search_tool_adds_tool_to_readonly_preset(self) -> None:
-        with temp_setting("web_search_enabled", True), temp_setting("web_search_provider", "serper"):
+        with (
+            temp_setting("web_search_enabled", True),
+            temp_setting("web_search_provider", "serper"),
+        ):
             status = web_search_module.register_web_search_tool()
 
         tool_names = [tool.name for tool in get_tools_for_preset("readonly")]
@@ -259,7 +293,9 @@ class OpenAPIToolTests(unittest.IsolatedAsyncioTestCase):
             statuses = openapi_module.register_openapi_tools()
 
         readonly_names = [tool.name for tool in get_tools_for_preset("readonly")]
-        self.assertEqual([status.key for status in statuses], ["openapi:search-gateway"])
+        self.assertEqual(
+            [status.key for status in statuses], ["openapi:search-gateway"]
+        )
         self.assertIn("search_gateway_query", readonly_names)
 
     async def test_openapi_tool_formats_search_results(self) -> None:
@@ -286,23 +322,30 @@ class OpenAPIToolTests(unittest.IsolatedAsyncioTestCase):
             ),
         )
 
-        with patch(
-            "ragtag_crew.external.openapi_provider.load_openapi_provider_configs",
-            return_value=[provider],
-        ), patch(
-            "ragtag_crew.external.openapi_provider._fetch_json_response",
-            return_value={
-                "results": [
-                    {
-                        "title": "Example title",
-                        "url": "https://example.com/doc",
-                        "snippet": "Example snippet",
-                    }
-                ]
-            },
+        with (
+            patch(
+                "ragtag_crew.external.openapi_provider.load_openapi_provider_configs",
+                return_value=[provider],
+            ),
+            patch(
+                "ragtag_crew.external.openapi_provider._fetch_json_response",
+                return_value={
+                    "results": [
+                        {
+                            "title": "Example title",
+                            "url": "https://example.com/doc",
+                            "snippet": "Example snippet",
+                        }
+                    ]
+                },
+            ),
         ):
             openapi_module.register_openapi_tools()
-            tool = next(tool for tool in get_tools_for_preset("readonly") if tool.name == "search_gateway_query")
+            tool = next(
+                tool
+                for tool in get_tools_for_preset("readonly")
+                if tool.name == "search_gateway_query"
+            )
             result = await tool.execute(query="hello", num_results=3)
 
         self.assertIn("OpenAPI search results:", result)
@@ -319,7 +362,11 @@ class MCPConfigTests(unittest.TestCase):
                         {
                             "name": "filesystem",
                             "command": "npx",
-                            "args": ["-y", "@modelcontextprotocol/server-filesystem", "."],
+                            "args": [
+                                "-y",
+                                "@modelcontextprotocol/server-filesystem",
+                                ".",
+                            ],
                             "cwd": ".",
                             "env": {"FOO": "bar"},
                             "enabled": True,
@@ -360,12 +407,15 @@ class MCPDiscoveryTests(unittest.IsolatedAsyncioTestCase):
             inputSchema={"type": "object", "properties": {"path": {"type": "string"}}},
         )
 
-        with patch(
-            "ragtag_crew.external.mcp_client.load_mcp_server_configs",
-            return_value=[server],
-        ), patch(
-            "ragtag_crew.external.mcp_client._list_tools_for_server",
-            new=AsyncMock(return_value=[remote_tool]),
+        with (
+            patch(
+                "ragtag_crew.external.mcp_client.load_mcp_server_configs",
+                return_value=[server],
+            ),
+            patch(
+                "ragtag_crew.external.mcp_client._list_tools_for_server",
+                new=AsyncMock(return_value=[remote_tool]),
+            ),
         ):
             statuses = await mcp_module.discover_mcp_tools()
 
@@ -374,6 +424,86 @@ class MCPDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("mcp_fs_read_file", statuses[0].tool_names)
         tool_names = [tool.name for tool in get_tools_for_preset("coding")]
         self.assertIn("mcp_fs_read_file", tool_names)
+
+    async def test_discover_mcp_tools_reports_timeout_as_not_ready(self) -> None:
+        server = mcp_module.MCPServerConfig(
+            name="slow-server",
+            command="slow-cmd",
+        )
+
+        async def _hang(*args: Any, **kwargs: Any) -> list[Any]:
+            raise TimeoutError(
+                "MCP server 'slow-server' timed out after 30s during tool discovery"
+            )
+
+        with (
+            patch(
+                "ragtag_crew.external.mcp_client.load_mcp_server_configs",
+                return_value=[server],
+            ),
+            patch(
+                "ragtag_crew.external.mcp_client._list_tools_for_server",
+                new=AsyncMock(side_effect=_hang),
+            ),
+        ):
+            statuses = await mcp_module.discover_mcp_tools()
+
+        self.assertEqual(len(statuses), 1)
+        self.assertFalse(statuses[0].ready)
+        self.assertIn("timed out", statuses[0].detail)
+
+    async def test_discover_mcp_tools_continues_after_single_tool_registration_error(
+        self,
+    ) -> None:
+        server = mcp_module.MCPServerConfig(
+            name="mixed-server",
+            command="mixed-cmd",
+            tool_prefix="mx",
+        )
+        good_tool = SimpleNamespace(
+            name="good_tool",
+            description="A good tool",
+            inputSchema={"type": "object", "properties": {}},
+        )
+        bad_tool = SimpleNamespace(
+            name=None,
+            description="Bad tool with no name",
+            inputSchema=None,
+        )
+
+        with (
+            patch(
+                "ragtag_crew.external.mcp_client.load_mcp_server_configs",
+                return_value=[server],
+            ),
+            patch(
+                "ragtag_crew.external.mcp_client._list_tools_for_server",
+                new=AsyncMock(return_value=[good_tool, bad_tool]),
+            ),
+        ):
+            statuses = await mcp_module.discover_mcp_tools()
+
+        self.assertEqual(len(statuses), 1)
+        self.assertTrue(statuses[0].ready)
+        self.assertIn("mcp_mx_good_tool", statuses[0].tool_names)
+
+    async def test_call_tool_on_server_returns_error_on_timeout(self) -> None:
+        server = mcp_module.MCPServerConfig(
+            name="hung-server",
+            command="hung-cmd",
+        )
+        with (
+            patch(
+                "ragtag_crew.external.mcp_client._call_tool_inner",
+                new=AsyncMock(side_effect=asyncio.TimeoutError()),
+            ),
+            temp_setting("external_tool_timeout", 5),
+        ):
+            result = await mcp_module._call_tool_on_server(server, "some_tool", {})
+
+        self.assertTrue(result.startswith("ERROR:"))
+        self.assertIn("timed out", result)
+        self.assertIn("hung-server", result)
 
 
 class OpenAPIPathParamTests(unittest.TestCase):
@@ -402,7 +532,9 @@ class OpenAPIPathParamTests(unittest.TestCase):
             path="/api/collections/$collection_id/items/$item_id",
             method="GET",
         )
-        url = openapi_module._build_url(provider, tool, {"collection_id": 1, "item_id": 99})
+        url = openapi_module._build_url(
+            provider, tool, {"collection_id": 1, "item_id": 99}
+        )
         self.assertEqual(url, "http://127.0.0.1:10001/api/collections/1/items/99")
 
     def test_path_param_url_encodes_special_chars(self) -> None:
@@ -430,7 +562,9 @@ class OpenAPIPathParamTests(unittest.TestCase):
             path="/api/collections/$collection_id/items",
             method="GET",
         )
-        url = openapi_module._build_url(provider, tool, {"collection_id": 5, "filter": None})
+        url = openapi_module._build_url(
+            provider, tool, {"collection_id": 5, "filter": None}
+        )
         self.assertEqual(url, "http://127.0.0.1:10001/api/collections/5/items")
 
     def test_path_param_preserves_query_params(self) -> None:
@@ -446,7 +580,9 @@ class OpenAPIPathParamTests(unittest.TestCase):
             query_params={"format": "json"},
         )
         url = openapi_module._build_url(provider, tool, {"collection_id": 3})
-        self.assertEqual(url, "http://127.0.0.1:10001/api/collections/3/export?format=json")
+        self.assertEqual(
+            url, "http://127.0.0.1:10001/api/collections/3/export?format=json"
+        )
 
     def test_path_param_url_encodes_reserved_chars(self) -> None:
         provider = openapi_module.OpenAPIProviderConfig(
@@ -505,29 +641,170 @@ class ExternalManagerTests(unittest.IsolatedAsyncioTestCase):
             tool_names=("mcp_fs_read_file",),
         )
 
-        with patch(
-            "ragtag_crew.external.manager.register_web_search_tool",
-            return_value=web_status,
-        ), patch(
-            "ragtag_crew.external.manager.register_everything_tool",
-            return_value=everything_status,
-        ), patch(
-            "ragtag_crew.external.manager.register_browser_tools",
-            return_value=[browser_isolated, browser_attached],
-        ), patch(
-            "ragtag_crew.external.manager.register_openapi_tools",
-            return_value=[openapi_status],
-        ), patch(
-            "ragtag_crew.external.manager.discover_mcp_tools",
-            new=AsyncMock(return_value=[mcp_status]),
+        with (
+            patch(
+                "ragtag_crew.external.manager.register_web_search_tool",
+                return_value=web_status,
+            ),
+            patch(
+                "ragtag_crew.external.manager.register_everything_tool",
+                return_value=everything_status,
+            ),
+            patch(
+                "ragtag_crew.external.manager.register_browser_tools",
+                return_value=[browser_isolated, browser_attached],
+            ),
+            patch(
+                "ragtag_crew.external.manager.register_openapi_tools",
+                return_value=[openapi_status],
+            ),
+            patch(
+                "ragtag_crew.external.manager.discover_mcp_tools",
+                new=AsyncMock(return_value=[mcp_status]),
+            ),
         ):
             statuses = await manager_module.initialize_external_capabilities(force=True)
 
         self.assertEqual(
             [status.key for status in statuses],
-            ["web-search", "everything", "browser-isolated", "browser-attached", "openapi:search-gateway", "mcp:fs"],
+            [
+                "web-search",
+                "everything",
+                "browser-isolated",
+                "browser-attached",
+                "openapi:search-gateway",
+                "mcp:fs",
+            ],
         )
-        self.assertEqual([status.key for status in manager_module.get_mcp_statuses()], ["mcp:fs"])
+        self.assertEqual(
+            [status.key for status in manager_module.get_mcp_statuses()], ["mcp:fs"]
+        )
+
+    async def test_initialize_preserves_partial_success_when_provider_fails(
+        self,
+    ) -> None:
+        manager_module._initialized = False
+        manager_module._capability_statuses = {}
+        web_status = manager_module.CapabilityStatus(
+            key="web-search",
+            kind="search",
+            ready=True,
+            tool_names=("web_search",),
+        )
+
+        with (
+            patch(
+                "ragtag_crew.external.manager.register_web_search_tool",
+                return_value=web_status,
+            ),
+            patch(
+                "ragtag_crew.external.manager.register_everything_tool",
+                side_effect=RuntimeError("everything init failed"),
+            ),
+            patch(
+                "ragtag_crew.external.manager.register_browser_tools",
+                side_effect=RuntimeError("browser init failed"),
+            ),
+            patch(
+                "ragtag_crew.external.manager.register_openapi_tools",
+                side_effect=RuntimeError("openapi init failed"),
+            ),
+            patch(
+                "ragtag_crew.external.manager.discover_mcp_tools",
+                new=AsyncMock(side_effect=RuntimeError("mcp init failed")),
+            ),
+        ):
+            statuses = await manager_module.initialize_external_capabilities(force=True)
+
+        keys = [s.key for s in statuses]
+        self.assertIn("web-search", keys)
+        self.assertNotIn("everything", keys)
+        self.assertTrue(manager_module._initialized)
+
+    async def test_initialize_does_not_mark_initialized_when_all_providers_fail(
+        self,
+    ) -> None:
+        manager_module._initialized = False
+        manager_module._capability_statuses = {}
+        web_status = manager_module.CapabilityStatus(
+            key="web-search",
+            kind="search",
+            ready=True,
+            tool_names=("web_search",),
+        )
+
+        with (
+            patch(
+                "ragtag_crew.external.manager.register_web_search_tool",
+                side_effect=RuntimeError("web init failed"),
+            ),
+            patch(
+                "ragtag_crew.external.manager.register_everything_tool",
+                side_effect=RuntimeError("everything init failed"),
+            ),
+            patch(
+                "ragtag_crew.external.manager.register_browser_tools",
+                side_effect=RuntimeError("browser init failed"),
+            ),
+            patch(
+                "ragtag_crew.external.manager.register_openapi_tools",
+                side_effect=RuntimeError("openapi init failed"),
+            ),
+            patch(
+                "ragtag_crew.external.manager.discover_mcp_tools",
+                new=AsyncMock(side_effect=RuntimeError("mcp init failed")),
+            ),
+        ):
+            statuses = await manager_module.initialize_external_capabilities(force=True)
+
+        self.assertEqual(statuses, [])
+        self.assertFalse(manager_module._initialized)
+
+        with (
+            patch(
+                "ragtag_crew.external.manager.register_web_search_tool",
+                return_value=web_status,
+            ),
+            patch(
+                "ragtag_crew.external.manager.register_everything_tool",
+                side_effect=RuntimeError("everything init failed"),
+            ),
+            patch(
+                "ragtag_crew.external.manager.register_browser_tools",
+                return_value=[],
+            ),
+            patch(
+                "ragtag_crew.external.manager.register_openapi_tools",
+                return_value=[],
+            ),
+            patch(
+                "ragtag_crew.external.manager.discover_mcp_tools",
+                new=AsyncMock(return_value=[]),
+            ),
+        ):
+            retried = await manager_module.initialize_external_capabilities()
+
+        self.assertEqual([status.key for status in retried], ["web-search"])
+        self.assertTrue(manager_module._initialized)
+
+    async def test_on_deferred_init_done_logs_exception(self) -> None:
+        manager_module._initialized = False
+        manager_module._capability_statuses = {}
+
+        async def _failing_init() -> list[manager_module.CapabilityStatus]:
+            raise RuntimeError("deferred boom")
+
+        with patch.object(manager_module.log, "error") as mock_log_error:
+            loop = asyncio.get_running_loop()
+            task = loop.create_task(_failing_init())
+            task.add_done_callback(manager_module._on_deferred_init_done)
+            try:
+                await task
+            except RuntimeError:
+                pass
+
+        mock_log_error.assert_called_once()
+        self.assertIn("deferred boom", str(mock_log_error.call_args[0][1]))
 
 
 if __name__ == "__main__":

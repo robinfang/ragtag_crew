@@ -19,6 +19,18 @@
 - **用户取消 vs 超时**：`UserAbortedError` 与 `TurnTimeoutError` 分开，Telegram 显示不同提示（「已取消」vs 错误信息）
 - **abort 中断粒度**：`_run_loop` 每轮检查 + `_execute_tool` 执行前后检查 + `stream_chat` 每个 chunk 前后检查。消息历史保留残缺内容不清理
 - **可用模型列表**：`config.py` 中 `available_models` 逗号分隔，`/model` 无参数时列出
+- **`/cancel` 显式反馈**：用户发送 `/cancel` 后立即回复“已发送取消信号”，不只依赖异步 streamer 侧反馈
+- **忙碌时进度查询**：会话忙碌时识别“进度/进展/好了没”等询问，返回当前 turn、工具执行数、最近响应预览
+
+## Telegram 渲染
+
+- **表格渲染方案**：采用代码块方案。Markdown 风格表格在发送前自动转换为等宽代码块，避免 Telegram 中错位
+- **代码块保护**：fenced code block 内的 `| ... |` 示例文本不参与表格转换，避免破坏原始代码或文档内容
+
+## 上下文系统
+
+- **环境引导**：在 `Project Context` 与 `User Context` 之间注入 `Workspace Snapshot`，提供受控目录树和关键配置文件摘要
+- **会话摘要阶段 A**：`session_summary` 保留关键工具参数、调用顺序，并在超限时优先保留更新近的压缩内容
 
 ## 开发模式
 

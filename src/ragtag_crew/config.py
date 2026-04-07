@@ -63,6 +63,16 @@ class Settings(BaseSettings):
     browser_attached_cdp_url: str = ""
     browser_attached_auto_connect: bool = False
 
+    # Env Bootstrap
+    env_bootstrap_enabled: bool = True
+    env_bootstrap_max_depth: int = 3
+    env_bootstrap_max_tokens: int = 2000
+    env_bootstrap_skip_dirs: str = (
+        ".git,.venv,venv,__pycache__,node_modules,"
+        ".mypy_cache,.pytest_cache,.ruff_cache,.tox,"
+        "dist,build,target,htmlcov,.eggs,.next,.nuxt,coverage"
+    )
+
     # Tools
     tools_cache_dir: str = "~/.ragtag_crew/bin"
     rg_command: str = "rg"

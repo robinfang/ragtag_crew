@@ -66,12 +66,12 @@ _SYSTEM_PROMPT = (
     "installing packages, running scripts, git operations, system commands, etc. "
     "Do NOT use `bash` to delete files — use `delete_file` instead.\n"
     "4. **Narrate intent, not process**: before each significant action, state what you are about to do in one short line "
-    "(e.g. \"Fixing the null-check in config.py\" or \"Writing the data loader\"). "
+    '(e.g. "Fixing the null-check in config.py" or "Writing the data loader"). '
     "After completing a non-trivial action, briefly state the outcome if it is not obvious. "
-    "Do NOT use hollow filler phrases (\"Sure!\", \"Of course!\", \"I'll help you with...\") "
+    'Do NOT use hollow filler phrases ("Sure!", "Of course!", "I\'ll help you with...") '
     "and do NOT repeat back what the user just said.\n"
     "5. **Progress updates**: for multi-step tasks, briefly report each completed major step before moving to the next "
-    "(e.g. \"Done: requirements.txt. Now writing data_io.py...\"). "
+    '(e.g. "Done: requirements.txt. Now writing data_io.py..."). '
     "When you receive a progress question, answer with done / in-progress / next before resuming normal work.\n"
     "6. **Windows environment**: you are running on Windows. "
     "Use forward slashes or backslashes for paths. "
@@ -142,6 +142,7 @@ _REGISTERED_COMMAND_NAMES = frozenset(c.command for c in _BOT_COMMANDS)
 
 # -- handlers ---------------------------------------------------------------
 
+
 async def _cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_authorized(update.effective_user.id):
         log.warning("Unauthorized /start from user_id=%s", update.effective_user.id)
@@ -170,7 +171,11 @@ def _format_summary_time(timestamp: float | None) -> str:
 
 
 def _context_status_text(session: AgentSession) -> str:
-    summary = _truncate_reply(session.session_summary, limit=1200) if session.session_summary else "(empty)"
+    summary = (
+        _truncate_reply(session.session_summary, limit=1200)
+        if session.session_summary
+        else "(empty)"
+    )
     return (
         "Context status:\n"
         f"Messages kept: {len(session.messages)}\n"
@@ -209,6 +214,7 @@ async def _cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
     session.abort()
     log.info("[chat %s] /cancel — abort signalled", chat_id)
+    await update.message.reply_text("已发送取消信号。")
 
 
 async def _cmd_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -224,9 +230,7 @@ async def _cmd_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         mode = "Plan" if session.planning_enabled else "Build"
         log.debug("[chat %s] /plan show — %s", chat_id, status)
         await update.message.reply_text(
-            f"Current mode: {mode}\n"
-            f"Planning: {status}\n\n"
-            "Usage: /plan on | /plan off"
+            f"Current mode: {mode}\nPlanning: {status}\n\nUsage: /plan on | /plan off"
         )
         return
 
@@ -235,12 +239,16 @@ async def _cmd_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         session.planning_enabled = True
         save_session(chat_id, session)
         log.info("[chat %s] /plan on", chat_id)
-        await update.message.reply_text("Plan mode ON — will output numbered plan before acting on non-trivial tasks.")
+        await update.message.reply_text(
+            "Plan mode ON — will output numbered plan before acting on non-trivial tasks."
+        )
     elif action == "off":
         session.planning_enabled = False
         save_session(chat_id, session)
         log.info("[chat %s] /plan off", chat_id)
-        await update.message.reply_text("Build mode ON — will proceed directly without planning.")
+        await update.message.reply_text(
+            "Build mode ON — will proceed directly without planning."
+        )
     else:
         await update.message.reply_text("Usage: /plan on | /plan off")
 
@@ -251,7 +259,7 @@ async def _cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
     chat_id = update.effective_chat.id
     session = _get_session(chat_id)
-    args = (context.args or [])
+    args = context.args or []
     if not args:
         models = settings.get_available_models()
         lines = [f"Current model: {session.model}"]
@@ -272,7 +280,9 @@ async def _cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     try:
         summary = await validate_model(new_model)
     except Exception as exc:
-        log.warning("[chat %s] /model %s — validation failed: %s", chat_id, new_model, exc)
+        log.warning(
+            "[chat %s] /model %s — validation failed: %s", chat_id, new_model, exc
+        )
         await update.message.reply_text(
             "Model validation failed; keeping current model.\n"
             f"Current model: {previous_model}\n"
@@ -294,18 +304,27 @@ async def _cmd_tools(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
     chat_id = update.effective_chat.id
     session = _get_session(chat_id)
-    args = (context.args or [])
+    args = context.args or []
     if not args:
         names = [t.name for t in session.tools]
-        log.debug("[chat %s] /tools show — preset: %s, tools: %s", chat_id, session.tool_preset, names)
-        await update.message.reply_text(f"Active tools: {', '.join(names)}\n\nUsage: /tools coding|readonly")
+        log.debug(
+            "[chat %s] /tools show — preset: %s, tools: %s",
+            chat_id,
+            session.tool_preset,
+            names,
+        )
+        await update.message.reply_text(
+            f"Active tools: {', '.join(names)}\n\nUsage: /tools coding|readonly"
+        )
         return
     preset = args[0]
     try:
         new_tools = get_tools_for_preset(preset)
     except KeyError:
         log.warning("[chat %s] /tools %s — unknown preset", chat_id, preset)
-        await update.message.reply_text(f"Unknown preset: {preset}\nAvailable: coding, readonly")
+        await update.message.reply_text(
+            f"Unknown preset: {preset}\nAvailable: coding, readonly"
+        )
         return
     session.tools = new_tools
     session.tool_preset = preset
@@ -323,7 +342,9 @@ async def _cmd_skills(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     session = _get_session(chat_id)
     available = list_skills()
     active = ", ".join(session.enabled_skills) if session.enabled_skills else "(none)"
-    log.debug("[chat %s] /skills — active: %s, available: %d", chat_id, active, len(available))
+    log.debug(
+        "[chat %s] /skills — active: %s, available: %d", chat_id, active, len(available)
+    )
     if not available:
         await update.message.reply_text(
             f"Active skills: {active}\nNo local skills found in {settings.skills_dir}"
@@ -345,7 +366,9 @@ async def _cmd_skill(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     session = _get_session(chat_id)
     args = context.args or []
     if not args:
-        active = ", ".join(session.enabled_skills) if session.enabled_skills else "(none)"
+        active = (
+            ", ".join(session.enabled_skills) if session.enabled_skills else "(none)"
+        )
         log.debug("[chat %s] /skill show — active: %s", chat_id, active)
         await update.message.reply_text(
             "Usage: /skill use <name> | /skill drop <name> | /skill clear\n"
@@ -369,7 +392,9 @@ async def _cmd_skill(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     try:
         skill = get_skill(skill_name)
     except KeyError:
-        log.warning("[chat %s] /skill %s — unknown skill: %s", chat_id, action, skill_name)
+        log.warning(
+            "[chat %s] /skill %s — unknown skill: %s", chat_id, action, skill_name
+        )
         await update.message.reply_text(f"Unknown skill: {skill_name}")
         return
 
@@ -382,13 +407,17 @@ async def _cmd_skill(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     if action == "drop":
-        session.enabled_skills = [name for name in session.enabled_skills if name != skill.name]
+        session.enabled_skills = [
+            name for name in session.enabled_skills if name != skill.name
+        ]
         save_session(chat_id, session)
         log.info("[chat %s] /skill drop %s", chat_id, skill.name)
         await update.message.reply_text(f"Disabled skill: {skill.name}")
         return
 
-    await update.message.reply_text("Usage: /skill use <name> | /skill drop <name> | /skill clear")
+    await update.message.reply_text(
+        "Usage: /skill use <name> | /skill drop <name> | /skill clear"
+    )
 
 
 async def _cmd_memory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -419,7 +448,9 @@ async def _cmd_memory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if not files:
             await update.message.reply_text("Memory files:\n- (none)")
             return
-        await update.message.reply_text("Memory files:\n" + "\n".join(f"- {name}" for name in files))
+        await update.message.reply_text(
+            "Memory files:\n" + "\n".join(f"- {name}" for name in files)
+        )
         return
 
     if action == "show":
@@ -442,8 +473,15 @@ async def _cmd_memory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             await update.message.reply_text("Usage: /memory add <note>")
             return
         path = append_memory_note(note)
-        log.info("[chat %s] /memory add -> %s/%s", update.effective_chat.id, path.parent.name, path.name)
-        await update.message.reply_text(f"Added memory note to {path.parent.name}/{path.name}")
+        log.info(
+            "[chat %s] /memory add -> %s/%s",
+            update.effective_chat.id,
+            path.parent.name,
+            path.name,
+        )
+        await update.message.reply_text(
+            f"Added memory note to {path.parent.name}/{path.name}"
+        )
         return
 
     if action == "promote":
@@ -451,12 +489,26 @@ async def _cmd_memory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         try:
             path, count = promote_inbox(target)
         except ValueError as exc:
-            log.warning("[chat %s] /memory promote %s — failed: %s", update.effective_chat.id, target, exc)
+            log.warning(
+                "[chat %s] /memory promote %s — failed: %s",
+                update.effective_chat.id,
+                target,
+                exc,
+            )
             await update.message.reply_text(str(exc))
             return
-        location = path.name if path.name == "MEMORY.md" else f"{path.parent.name}/{path.name}"
-        log.info("[chat %s] /memory promote %d entries -> %s", update.effective_chat.id, count, location)
-        await update.message.reply_text(f"Promoted {count} inbox entr{'y' if count == 1 else 'ies'} to {location}")
+        location = (
+            path.name if path.name == "MEMORY.md" else f"{path.parent.name}/{path.name}"
+        )
+        log.info(
+            "[chat %s] /memory promote %d entries -> %s",
+            update.effective_chat.id,
+            count,
+            location,
+        )
+        await update.message.reply_text(
+            f"Promoted {count} inbox entr{'y' if count == 1 else 'ies'} to {location}"
+        )
         return
 
     await update.message.reply_text(
@@ -492,7 +544,11 @@ async def _cmd_context(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             )
             return
 
-        log.info("[chat %s] /context compress — done, %d messages kept", chat_id, len(session.messages))
+        log.info(
+            "[chat %s] /context compress — done, %d messages kept",
+            chat_id,
+            len(session.messages),
+        )
         await update.message.reply_text(
             "Context compacted.\n\n" + _context_status_text(session)
         )
@@ -555,17 +611,27 @@ def _format_browser_status_text(session: AgentSession) -> str:
     attached_state = _capability_state_text(attached) if attached else "unknown"
     isolated_detail = isolated.detail if isolated else ""
     attached_detail = attached.detail if attached else ""
-    if runtime.attached_target.startswith("http://") or runtime.attached_target.startswith("ws://") or runtime.attached_target.startswith("wss://"):
+    if (
+        runtime.attached_target.startswith("http://")
+        or runtime.attached_target.startswith("ws://")
+        or runtime.attached_target.startswith("wss://")
+    ):
         attached_path = "manual-cdp"
         attached_target_text = runtime.attached_target
-        attached_connect_hint = "Run /browser connect to attach via the configured CDP URL."
+        attached_connect_hint = (
+            "Run /browser connect to attach via the configured CDP URL."
+        )
     elif runtime.attached_target == "auto-connect":
         attached_path = "auto-connect"
         attached_target_text = "discover a running Chrome/Edge automatically"
-        attached_connect_hint = "Run /browser connect to let agent-browser auto-discover Chrome/Edge."
+        attached_connect_hint = (
+            "Run /browser connect to let agent-browser auto-discover Chrome/Edge."
+        )
     else:
         attached_path = "not-configured"
-        attached_target_text = "set BROWSER_ATTACHED_CDP_URL or enable BROWSER_ATTACHED_AUTO_CONNECT"
+        attached_target_text = (
+            "set BROWSER_ATTACHED_CDP_URL or enable BROWSER_ATTACHED_AUTO_CONNECT"
+        )
         attached_connect_hint = "Configure a CDP URL for stable attach, or enable auto-connect for convenience."
     return (
         "Browser status:\n"
@@ -618,7 +684,9 @@ async def _cmd_mcp(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if args and args[0].lower() == "reload":
         await initialize_external_capabilities(force=True)
         log.info("[chat %s] /mcp reload", update.effective_chat.id)
-        await update.message.reply_text("MCP capabilities reloaded.\n\n" + _format_mcp_status_text())
+        await update.message.reply_text(
+            "MCP capabilities reloaded.\n\n" + _format_mcp_status_text()
+        )
         return
     log.debug("[chat %s] /mcp show", update.effective_chat.id)
     await update.message.reply_text(_format_mcp_status_text())
@@ -641,16 +709,16 @@ async def _cmd_browser(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     if action == "mode":
         if len(args) < 2:
-            await update.message.reply_text(
-                "Usage: /browser mode isolated|attached"
-            )
+            await update.message.reply_text("Usage: /browser mode isolated|attached")
             return
         mode = args[1].lower()
         if mode not in {"isolated", "attached"}:
             await update.message.reply_text("Usage: /browser mode isolated|attached")
             return
         if mode == "attached" and not settings.browser_attached_enabled:
-            await update.message.reply_text("Attached browser mode is disabled in configuration.")
+            await update.message.reply_text(
+                "Attached browser mode is disabled in configuration."
+            )
             return
         if (
             mode == "attached"
@@ -666,7 +734,8 @@ async def _cmd_browser(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         save_session(chat_id, session)
         log.info("[chat %s] /browser mode -> %s", chat_id, mode)
         await update.message.reply_text(
-            f"Browser mode switched to: {mode}\n\n" + _format_browser_status_text(session)
+            f"Browser mode switched to: {mode}\n\n"
+            + _format_browser_status_text(session)
         )
         return
 
@@ -675,7 +744,8 @@ async def _cmd_browser(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         save_session(chat_id, session)
         log.info("[chat %s] /browser confirm-attached", chat_id)
         await update.message.reply_text(
-            "Attached browser confirmed for this session.\n\n" + _format_browser_status_text(session)
+            "Attached browser confirmed for this session.\n\n"
+            + _format_browser_status_text(session)
         )
         return
 
@@ -686,12 +756,16 @@ async def _cmd_browser(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         save_session(chat_id, session)
         log.info("[chat %s] /browser revoke-attached", chat_id)
         await update.message.reply_text(
-            "Attached browser confirmation revoked.\n\n" + _format_browser_status_text(session)
+            "Attached browser confirmation revoked.\n\n"
+            + _format_browser_status_text(session)
         )
         return
 
     if action == "connect":
-        if settings.browser_attached_require_confirmation and not session.browser_attached_confirmed:
+        if (
+            settings.browser_attached_require_confirmation
+            and not session.browser_attached_confirmed
+        ):
             await update.message.reply_text(
                 "Attached browser connect requires explicit confirmation first. "
                 "Run /browser confirm-attached before connecting."
@@ -700,7 +774,9 @@ async def _cmd_browser(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         ok, detail = await connect_attached_browser()
         await initialize_external_capabilities(force=True)
         log.info("[chat %s] /browser connect — %s", chat_id, "ok" if ok else "failed")
-        prefix = "Attached browser connected." if ok else "Attached browser connect failed."
+        prefix = (
+            "Attached browser connected." if ok else "Attached browser connect failed."
+        )
         await update.message.reply_text(
             f"{prefix}\n{detail}\n\n" + _format_browser_status_text(session)
         )
@@ -710,7 +786,9 @@ async def _cmd_browser(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         detail = disconnect_attached_browser()
         await initialize_external_capabilities(force=True)
         log.info("[chat %s] /browser disconnect", chat_id)
-        await update.message.reply_text(detail + "\n\n" + _format_browser_status_text(session))
+        await update.message.reply_text(
+            detail + "\n\n" + _format_browser_status_text(session)
+        )
         return
 
     await update.message.reply_text(
@@ -735,7 +813,9 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if _is_progress_query(text):
             await update.message.reply_text(session.render_progress_text())
         else:
-            await update.message.reply_text("Please wait for the current response to finish.")
+            await update.message.reply_text(
+                "Please wait for the current response to finish."
+            )
         return
 
     placeholder = await update.message.reply_text("Thinking...")
@@ -771,12 +851,15 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 # -- application builder ---------------------------------------------------
 
+
 async def _register_commands(app: Application) -> None:
     try:
         await app.bot.set_my_commands(_BOT_COMMANDS)
         log.info("bot command menu registered (%d commands)", len(_BOT_COMMANDS))
     except Exception:
-        log.warning("failed to register bot command menu, continuing without it", exc_info=True)
+        log.warning(
+            "failed to register bot command menu, continuing without it", exc_info=True
+        )
 
 
 def build_app() -> Application:
