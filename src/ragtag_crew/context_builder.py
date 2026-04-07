@@ -56,12 +56,16 @@ def build_system_prompt(
             parts,
             "Planning Protocol",
             (
-                "For non-trivial tasks (requiring 3+ steps, touching multiple files, or involving design decisions):\n"
-                "1. Before taking any action, output a brief numbered plan.\n"
-                "2. After the plan, wait for the user to confirm or adjust before proceeding.\n"
-                "3. Once confirmed, execute step by step.\n"
-                "4. If new information changes the plan, update it and inform the user.\n\n"
-                "For trivial tasks (simple question, single file edit, quick lookup), proceed directly."
+                "For non-trivial tasks — including: creating new files, editing 3+ files, "
+                "any architecture or design decision, or any task where the approach is unclear — "
+                "follow this protocol:\n"
+                "1. Before taking any action, output a brief numbered plan (what steps, which files, why).\n"
+                "2. Wait for the user to confirm or adjust (a simple 'proceed' or '开工' counts as confirmation).\n"
+                "3. Execute step by step, briefly reporting each completed step before moving to the next.\n"
+                "4. If new information changes the plan mid-execution, state the change before continuing.\n"
+                "5. When you receive a progress question (e.g. '进展如何', '怎么样了'), "
+                "immediately summarize what is done, what is in progress, and what remains.\n\n"
+                "For trivial tasks (single-file edit, quick lookup, direct question), proceed directly without a plan."
             ),
         )
 

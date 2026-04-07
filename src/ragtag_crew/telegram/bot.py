@@ -56,7 +56,7 @@ _sessions: dict[int, AgentSession] = {}
 # Default system prompt
 _SYSTEM_PROMPT = (
     "You are a concise, efficient coding assistant.  "
-    "Follow these tool usage rules strictly:\n"
+    "Follow these rules strictly:\n"
     "\n"
     "1. **Use built-in tools first**: prefer `read`, `write`, `edit`, `delete_file`, `grep`, `find`, `ls` over `bash`. "
     "These tools are faster, safer, and produce cleaner output.\n"
@@ -65,12 +65,18 @@ _SYSTEM_PROMPT = (
     "3. **`bash`** is only for operations that built-in tools cannot do: "
     "installing packages, running scripts, git operations, system commands, etc. "
     "Do NOT use `bash` to delete files — use `delete_file` instead.\n"
-    "4. **Be concise**: respond in as few words as possible. "
-    "Avoid preamble, summaries, and explanations unless asked.\n"
-    "5. **Windows environment**: you are running on Windows. "
+    "4. **Narrate intent, not process**: before each significant action, state what you are about to do in one short line "
+    "(e.g. \"Fixing the null-check in config.py\" or \"Writing the data loader\"). "
+    "After completing a non-trivial action, briefly state the outcome if it is not obvious. "
+    "Do NOT use hollow filler phrases (\"Sure!\", \"Of course!\", \"I'll help you with...\") "
+    "and do NOT repeat back what the user just said.\n"
+    "5. **Progress updates**: for multi-step tasks, briefly report each completed major step before moving to the next "
+    "(e.g. \"Done: requirements.txt. Now writing data_io.py...\"). "
+    "When you receive a progress question, answer with done / in-progress / next before resuming normal work.\n"
+    "6. **Windows environment**: you are running on Windows. "
     "Use forward slashes or backslashes for paths. "
     "For paths outside the working directory, use `bash` with native Windows commands.\n"
-    "6. **Batch operations**: make multiple independent tool calls in a single turn when possible."
+    "7. **Batch operations**: make multiple independent tool calls in a single turn when possible."
 )
 
 
@@ -89,6 +95,22 @@ def _get_session(chat_id: int) -> AgentSession:
                 browser_mode=settings.browser_mode_default,
             )
     return _sessions[chat_id]
+
+
+def _is_progress_query(text: str) -> bool:
+    normalized = " ".join(text.lower().split())
+    keywords = (
+        "progress",
+        "status",
+        "update",
+        "进展",
+        "进度",
+        "怎么样了",
+        "咋样了",
+        "好了没",
+        "做完没",
+    )
+    return any(keyword in normalized for keyword in keywords)
 
 
 def _is_authorized(user_id: int) -> bool:
@@ -710,7 +732,10 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     log.debug("[chat %s] prompt: %.80s", chat_id, text)
 
     if session.is_busy:
-        await update.message.reply_text("Please wait for the current response to finish.")
+        if _is_progress_query(text):
+            await update.message.reply_text(session.render_progress_text())
+        else:
+            await update.message.reply_text("Please wait for the current response to finish.")
         return
 
     placeholder = await update.message.reply_text("Thinking...")
@@ -721,6 +746,7 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         user_input=text,
         tool_preset=session.tool_preset,
         enabled_skills=session.enabled_skills,
+        planning_enabled=session.planning_enabled,
     )
     session.subscribe(streamer.on_event)
     session.subscribe(collector.on_event)

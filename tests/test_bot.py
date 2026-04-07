@@ -655,6 +655,19 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(update.message.reply_calls[0]["text"], "Please wait for the current response to finish.")
 
+    async def test_handle_message_busy_progress_query_returns_snapshot(self) -> None:
+        session = SimpleNamespace(
+            is_busy=True,
+            render_progress_text=lambda: "任务仍在执行。\n正在执行: write",
+        )
+        bot_module._sessions[100] = session
+        update = FakeUpdate(chat_id=100, text="进展如何")
+
+        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True):
+            await bot_module._handle_message(update, FakeContext())
+
+        self.assertEqual(update.message.reply_calls[0]["text"], "任务仍在执行。\n正在执行: write")
+
     async def test_handle_message_runs_prompt_and_finalizes_streamer(self) -> None:
         placeholder = FakeSentMessage()
         update = FakeUpdate(chat_id=100, text="hello", placeholder=placeholder)
@@ -663,6 +676,7 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
             model="openai/GLM-5.1",
             tool_preset="coding",
             enabled_skills=[],
+            planning_enabled=True,
             prompt=AsyncMock(),
             subscribe=lambda cb: None,
             unsubscribe=lambda cb: None,
@@ -690,6 +704,7 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
             model="openai/GLM-5.1",
             tool_preset="coding",
             enabled_skills=[],
+            planning_enabled=True,
             prompt=AsyncMock(side_effect=RuntimeError("broken")),
             subscribe=lambda cb: None,
             unsubscribe=lambda cb: None,
