@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import unittest
 from unittest.mock import patch
 
@@ -128,6 +129,30 @@ class AgentSessionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("Earlier work: settled repo structure.", session.session_summary)
         self.assertIn("follow-up change", session.session_summary)
+
+    def test_render_progress_text_includes_runtime_snapshot(self) -> None:
+        session = AgentSession(
+            model="openai/GLM-5.1",
+            tools=[Tool("noop", "noop", {"type": "object"}, _noop_tool)],
+        )
+        session._busy = True
+        session._active_started_at = time.monotonic()
+        session._active_request_text = "修复回归模块"
+        session._active_turn = 2
+        session._completed_turns = 1
+        session._completed_tools = 3
+        session._active_tool_name = "write"
+        session._response_preview = "正在补测试"
+
+        text = session.render_progress_text()
+
+        self.assertIn("任务仍在执行。", text)
+        self.assertIn("当前请求: 修复回归模块", text)
+        self.assertIn("当前轮次: 2", text)
+        self.assertIn("已完成轮次: 1", text)
+        self.assertIn("已执行工具: 3 次", text)
+        self.assertIn("正在执行: write", text)
+        self.assertIn("最近输出: 正在补测试", text)
 
     def test_manual_compact_respects_force_flag(self) -> None:
         session = AgentSession(

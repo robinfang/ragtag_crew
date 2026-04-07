@@ -48,6 +48,7 @@ class TraceCollectorTests(unittest.IsolatedAsyncioTestCase):
                     user_input="read the file",
                     tool_preset="coding",
                     enabled_skills=["review"],
+                    planning_enabled=True,
                 )
 
                 await c.on_event("agent_start")
@@ -77,6 +78,7 @@ class TraceCollectorTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(record["user_input"], "read the file")
                 self.assertEqual(record["tool_preset"], "coding")
                 self.assertEqual(record["enabled_skills"], ["review"])
+                self.assertTrue(record["planning_enabled"])
                 self.assertEqual(record["total_turns"], 1)
                 self.assertEqual(record["status"], "success")
                 self.assertEqual(len(record["turns"]), 1)

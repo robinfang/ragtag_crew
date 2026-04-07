@@ -64,6 +64,7 @@ class TraceCollector:
         self.user_input: str = ""
         self.tool_preset: str = ""
         self.enabled_skills: list[str] = []
+        self.planning_enabled: bool | None = None
         self.compaction_triggered = False
 
     def set_context(
@@ -73,11 +74,13 @@ class TraceCollector:
         user_input: str,
         tool_preset: str = "",
         enabled_skills: list[str] | None = None,
+        planning_enabled: bool | None = None,
     ) -> None:
         self.model = model
         self.user_input = _clip(user_input, 200)
         self.tool_preset = tool_preset
         self.enabled_skills = list(enabled_skills or [])
+        self.planning_enabled = planning_enabled
 
     async def on_event(self, event_type: str, **kwargs: Any) -> None:
         if not settings.trace_enabled:
@@ -157,6 +160,7 @@ class TraceCollector:
             "model": self.model,
             "tool_preset": self.tool_preset,
             "enabled_skills": self.enabled_skills,
+            "planning_enabled": self.planning_enabled,
             "user_input": self.user_input,
             "total_turns": len(self.turns),
             "total_time_ms": total_ms,

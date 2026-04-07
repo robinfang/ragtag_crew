@@ -75,12 +75,45 @@ class AgentSession:
         self._callbacks: list[EventCallback] = []
         self._abort_event = asyncio.Event()
         self._busy = False
+        self._active_started_at: float | None = None
+        self._active_turn = 0
+        self._completed_turns = 0
+        self._completed_tools = 0
+        self._active_tool_name: str | None = None
+        self._last_tool_name: str | None = None
+        self._response_preview = ""
+        self._active_request_text = ""
 
     # -- public state -------------------------------------------------------
 
     @property
     def is_busy(self) -> bool:
         return self._busy
+
+    def render_progress_text(self) -> str:
+        """Return a short runtime snapshot for busy-state progress queries."""
+        if not self._busy:
+            return "当前没有进行中的任务。"
+
+        lines = ["任务仍在执行。"]
+        if self._active_started_at is not None:
+            lines.append(f"已运行: {self._format_elapsed(self._active_started_at)}")
+        if self._active_request_text:
+            lines.append(f"当前请求: {self._clip_progress_text(self._active_request_text, 80)}")
+        if self._active_turn:
+            lines.append(f"当前轮次: {self._active_turn}")
+        if self._completed_turns:
+            lines.append(f"已完成轮次: {self._completed_turns}")
+        if self._completed_tools:
+            lines.append(f"已执行工具: {self._completed_tools} 次")
+        if self._active_tool_name:
+            lines.append(f"正在执行: {self._active_tool_name}")
+        elif self._last_tool_name:
+            lines.append(f"最近一步: {self._last_tool_name}")
+        if self._response_preview:
+            lines.append(f"最近输出: {self._response_preview}")
+        lines.append("如需中止，发送 /cancel。")
+        return "\n".join(lines)
 
     # -- subscription -------------------------------------------------------
 
@@ -136,6 +169,14 @@ class AgentSession:
 
         self._busy = True
         self._abort_event.clear()
+        self._active_started_at = time.monotonic()
+        self._active_turn = 0
+        self._completed_turns = 0
+        self._completed_tools = 0
+        self._active_tool_name = None
+        self._last_tool_name = None
+        self._response_preview = ""
+        self._active_request_text = self._clip_progress_text(text, 120)
         self.messages.append({"role": "user", "content": text})
 
         await self._emit("agent_start")
@@ -163,12 +204,34 @@ class AgentSession:
         finally:
             self._maybe_compact_history()
             self._busy = False
+            self._active_started_at = None
+            self._active_turn = 0
+            self._active_tool_name = None
+            self._active_request_text = ""
             await self._emit("agent_end", content=final_content)
 
         return final_content
 
     async def _on_text_delta(self, delta: str) -> None:
+        if delta:
+            preview = self._response_preview + delta
+            self._response_preview = self._clip_progress_text(preview, 160)
         await self._emit("message_update", delta=delta)
+
+    @staticmethod
+    def _clip_progress_text(text: str, limit: int) -> str:
+        clean = " ".join(text.split())
+        if len(clean) <= limit:
+            return clean
+        return clean[: limit - 3].rstrip() + "..."
+
+    @staticmethod
+    def _format_elapsed(started_at: float) -> str:
+        elapsed = max(0, round(time.monotonic() - started_at))
+        minutes, seconds = divmod(elapsed, 60)
+        if minutes:
+            return f"{minutes}m {seconds}s"
+        return f"{seconds}s"
 
     def _append_assistant_message(self, response: LLMResponse) -> None:
         assistant_msg: dict[str, Any] = {"role": "assistant"}
@@ -255,6 +318,7 @@ class AgentSession:
             if self._abort_event.is_set():
                 raise UserAbortedError()
 
+            self._active_turn = turn
             await self._emit("turn_start", turn=turn)
             await self._emit("message_start")
 
@@ -268,11 +332,15 @@ class AgentSession:
                 )
             except (LLMTimeoutError, LLMChunkTimeoutError) as exc:
                 response = exc.partial_response or LLMResponse()
+                if response.content:
+                    self._response_preview = self._clip_progress_text(response.content, 160)
                 await self._emit("message_end", content=response.content)
                 self._append_assistant_message(response)
                 last_content = response.content
                 raise
 
+            if response.content:
+                self._response_preview = self._clip_progress_text(response.content, 160)
             await self._emit("message_end", content=response.content)
 
             self._append_assistant_message(response)
@@ -291,8 +359,12 @@ class AgentSession:
                 if self._abort_event.is_set():
                     raise UserAbortedError()
 
+                self._active_tool_name = tc.name
                 await self._emit("tool_execution_start", tool_call=tc)
                 result = await self._execute_tool(tc)
+                self._active_tool_name = None
+                self._last_tool_name = tc.name
+                self._completed_tools += 1
                 await self._emit("tool_execution_end", tool_call=tc, result=result)
 
                 tool_meta = get_tool(tc.name)
@@ -308,6 +380,7 @@ class AgentSession:
                 )
 
             await self._emit("turn_end", turn=turn)
+            self._completed_turns = turn
         else:
             log.warning("Agent loop hit max_turns (%d)", settings.max_turns)
 
