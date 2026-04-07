@@ -168,7 +168,18 @@ async def _find_with_rg(pattern: str, root: Path) -> str | None:
         return f"ERROR: {error}"
 
     output = stdout.decode(errors="replace").strip()
-    return _truncate(output) if output else "No files found."
+    if not output:
+        return "No files found."
+
+    # rg 输出绝对路径，统一转换为相对于 root 的路径（正斜杠）
+    lines: list[str] = []
+    for line in output.splitlines():
+        try:
+            rel = Path(line).relative_to(root)
+            lines.append(rel.as_posix())
+        except ValueError:
+            lines.append(line)
+    return _truncate("\n".join(lines))
 
 
 async def _find_with_python(pattern: str, root: Path) -> str:
