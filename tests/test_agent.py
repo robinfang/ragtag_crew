@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from ragtag_crew.agent import AgentSession
 from ragtag_crew.errors import LLMChunkTimeoutError, TurnTimeoutError
-from ragtag_crew.llm import LLMResponse
+from ragtag_crew.llm import LLMResponse, ToolCall
 from ragtag_crew.tools import Tool
 
 
@@ -26,9 +26,12 @@ class AgentSessionTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0.05)
             return LLMResponse(content="late")
 
-        with patch("ragtag_crew.agent.settings.turn_timeout", 0.01), patch(
-            "ragtag_crew.agent.stream_chat",
-            side_effect=slow_stream_chat,
+        with (
+            patch("ragtag_crew.agent.settings.turn_timeout", 0.01),
+            patch(
+                "ragtag_crew.agent.stream_chat",
+                side_effect=slow_stream_chat,
+            ),
         ):
             with self.assertRaises(TurnTimeoutError):
                 await session.prompt("hello")
@@ -42,7 +45,9 @@ class AgentSessionTests(unittest.IsolatedAsyncioTestCase):
         )
 
         async def chunk_timeout(**kwargs):  # type: ignore[no-untyped-def]
-            raise LLMChunkTimeoutError(30, partial_response=LLMResponse(content="hello"))
+            raise LLMChunkTimeoutError(
+                30, partial_response=LLMResponse(content="hello")
+            )
 
         with patch("ragtag_crew.agent.stream_chat", side_effect=chunk_timeout):
             with self.assertRaises(LLMChunkTimeoutError):
@@ -64,9 +69,11 @@ class AgentSessionTests(unittest.IsolatedAsyncioTestCase):
         async def ok_stream(**kwargs):  # type: ignore[no-untyped-def]
             return LLMResponse(content="latest answer")
 
-        with patch("ragtag_crew.agent.stream_chat", side_effect=ok_stream), patch(
-            "ragtag_crew.agent.settings.session_summary_trigger_messages", 4
-        ), patch("ragtag_crew.agent.settings.session_summary_recent_messages", 2):
+        with (
+            patch("ragtag_crew.agent.stream_chat", side_effect=ok_stream),
+            patch("ragtag_crew.agent.settings.session_summary_trigger_messages", 4),
+            patch("ragtag_crew.agent.settings.session_summary_recent_messages", 2),
+        ):
             result = await session.prompt("new request")
 
         self.assertEqual(result, "latest answer")
@@ -122,9 +129,11 @@ class AgentSessionTests(unittest.IsolatedAsyncioTestCase):
         async def ok_stream(**kwargs):  # type: ignore[no-untyped-def]
             return LLMResponse(content="done")
 
-        with patch("ragtag_crew.agent.stream_chat", side_effect=ok_stream), patch(
-            "ragtag_crew.agent.settings.session_summary_trigger_messages", 3
-        ), patch("ragtag_crew.agent.settings.session_summary_recent_messages", 2):
+        with (
+            patch("ragtag_crew.agent.stream_chat", side_effect=ok_stream),
+            patch("ragtag_crew.agent.settings.session_summary_trigger_messages", 3),
+            patch("ragtag_crew.agent.settings.session_summary_recent_messages", 2),
+        ):
             await session.prompt("compress more")
 
         self.assertIn("Earlier work: settled repo structure.", session.session_summary)
@@ -165,14 +174,182 @@ class AgentSessionTests(unittest.IsolatedAsyncioTestCase):
             {"role": "user", "content": "third"},
         ]
 
-        with patch("ragtag_crew.agent.settings.session_summary_trigger_messages", 10), patch(
-            "ragtag_crew.agent.settings.session_summary_recent_messages", 2
+        with (
+            patch("ragtag_crew.agent.settings.session_summary_trigger_messages", 10),
+            patch("ragtag_crew.agent.settings.session_summary_recent_messages", 2),
         ):
             changed = session.compact(force=True)
 
         self.assertTrue(changed)
         self.assertEqual(len(session.messages), 2)
         self.assertIn("first", session.session_summary)
+
+    def test_detect_file_modifications_with_write(self) -> None:
+        session = AgentSession(
+            model="openai/GLM-5.1",
+            tools=[Tool("noop", "noop", {"type": "object"}, _noop_tool)],
+        )
+        session.messages = [
+            {"role": "user", "content": "old"},
+            {
+                "role": "tool",
+                "tool_name": "write_file",
+                "tool_call_id": "c1",
+                "content": "ok",
+            },
+            {"role": "user", "content": "new"},
+        ]
+        self.assertTrue(session._detect_file_modifications(1))
+        self.assertFalse(session._detect_file_modifications(2))
+
+    def test_detect_file_modifications_no_write(self) -> None:
+        session = AgentSession(
+            model="openai/GLM-5.1",
+            tools=[Tool("noop", "noop", {"type": "object"}, _noop_tool)],
+        )
+        session.messages = [
+            {
+                "role": "tool",
+                "tool_name": "read_file",
+                "tool_call_id": "c1",
+                "content": "ok",
+            },
+            {
+                "role": "tool",
+                "tool_name": "grep",
+                "tool_call_id": "c2",
+                "content": "ok",
+            },
+        ]
+        self.assertFalse(session._detect_file_modifications(0))
+
+    def test_detect_file_modifications_edit_and_delete(self) -> None:
+        session = AgentSession(
+            model="openai/GLM-5.1",
+            tools=[Tool("noop", "noop", {"type": "object"}, _noop_tool)],
+        )
+        session.messages = [
+            {
+                "role": "tool",
+                "tool_name": "edit_file",
+                "tool_call_id": "c1",
+                "content": "ok",
+            },
+            {
+                "role": "tool",
+                "tool_name": "delete_file",
+                "tool_call_id": "c2",
+                "content": "ok",
+            },
+        ]
+        self.assertTrue(session._detect_file_modifications(0))
+
+    async def test_verify_phase_skipped_when_no_file_modification(self) -> None:
+        call_count = 0
+
+        async def ok_stream(**kwargs):  # type: ignore[no-untyped-def]
+            nonlocal call_count
+            call_count += 1
+            return LLMResponse(content="done")
+
+        session = AgentSession(
+            model="openai/GLM-5.1",
+            tools=[Tool("noop", "noop", {"type": "object"}, _noop_tool)],
+        )
+
+        with (
+            patch("ragtag_crew.agent.stream_chat", side_effect=ok_stream),
+            patch("ragtag_crew.agent.settings.verify_enabled", True),
+        ):
+            await session.prompt("just read something")
+
+        self.assertEqual(call_count, 1)
+
+    async def test_verify_phase_injected_after_file_write(self) -> None:
+        call_count = 0
+
+        async def write_then_done(**kwargs):  # type: ignore[no-untyped-def]
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return LLMResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(
+                            id="c1",
+                            name="write_file",
+                            arguments={"path": "test.py", "content": "hello"},
+                        )
+                    ],
+                )
+            return LLMResponse(content="all good")
+
+        async def noop_execute(**kwargs):  # type: ignore[no-untyped-def]
+            return "file written"
+
+        write_tool = Tool("write_file", "write", {"type": "object"}, noop_execute)
+
+        with (
+            patch("ragtag_crew.agent.get_tool", return_value=write_tool),
+            patch("ragtag_crew.agent.stream_chat", side_effect=write_then_done),
+            patch("ragtag_crew.agent.settings.verify_enabled", True),
+            patch("ragtag_crew.agent.settings.verify_commands", "pytest"),
+            patch("ragtag_crew.agent.settings.verify_max_turns", 2),
+        ):
+            session = AgentSession(
+                model="openai/GLM-5.1",
+                tools=[write_tool],
+            )
+            result = await session.prompt("add a test file")
+
+        self.assertEqual(result, "all good")
+        self.assertTrue(call_count >= 2)
+        verify_msgs = [
+            m for m in session.messages if "验证" in (m.get("content") or "")
+        ]
+        self.assertEqual(len(verify_msgs), 1)
+
+    async def test_verify_phase_not_injected_when_disabled(self) -> None:
+        call_count = 0
+
+        async def write_then_done(**kwargs):  # type: ignore[no-untyped-def]
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return LLMResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(
+                            id="c1",
+                            name="write_file",
+                            arguments={"path": "test.py", "content": "x"},
+                        )
+                    ],
+                )
+            return LLMResponse(content="ok")
+
+        async def noop_execute(**kwargs):  # type: ignore[no-untyped-def]
+            return "ok"
+
+        write_tool = Tool("write_file", "write", {"type": "object"}, noop_execute)
+
+        with (
+            patch("ragtag_crew.agent.get_tool", return_value=write_tool),
+            patch("ragtag_crew.agent.stream_chat", side_effect=write_then_done),
+            patch("ragtag_crew.agent.settings.verify_enabled", False),
+        ):
+            session = AgentSession(
+                model="openai/GLM-5.1",
+                tools=[write_tool],
+            )
+            result = await session.prompt("write something")
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(call_count, 2)
+        verify_msgs = [
+            m for m in session.messages if "验证" in (m.get("content") or "")
+        ]
+        self.assertEqual(len(verify_msgs), 0)
 
 
 if __name__ == "__main__":

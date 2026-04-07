@@ -8,6 +8,7 @@ from ragtag_crew.session_summary import (
     _merge_summary,
     _summarize_message,
     _tool_call_label,
+    clear_stale_tool_results,
     compact_history,
 )
 
@@ -333,3 +334,95 @@ class TestCompactHistory:
                 max_chars=800,
             )
         assert "round 4" in summary
+
+
+class TestClearStaleToolResults:
+    def _tool_msg(self, content: str, i: int) -> dict:
+        return {
+            "role": "tool",
+            "content": content,
+            "tool_call_id": f"tc{i}",
+            "tool_name": f"tool_{i}",
+        }
+
+    def _user_msg(self, content: str) -> dict:
+        return {"role": "user", "content": content}
+
+    def _assistant_msg(self, content: str = "") -> dict:
+        return {"role": "assistant", "content": content}
+
+    def test_no_truncation_when_within_limit(self):
+        messages = [
+            self._user_msg("hi"),
+            self._assistant_msg(),
+            self._tool_msg("x" * 100, 1),
+        ]
+        result = clear_stale_tool_results(messages, keep_recent=8)
+        assert result[2]["content"] == "x" * 100
+
+    def test_stale_tool_results_truncated(self):
+        long_content = "A" * 500
+        messages = [
+            self._tool_msg(long_content, 1),
+            self._tool_msg(long_content, 2),
+            self._tool_msg(long_content, 3),
+            self._tool_msg(long_content, 4),
+        ]
+        result = clear_stale_tool_results(messages, keep_recent=2, truncate_to=50)
+        assert result[0]["content"].startswith("[Result truncated: 500 chars]")
+        assert result[1]["content"].startswith("[Result truncated: 500 chars]")
+        assert result[2]["content"] == long_content
+        assert result[3]["content"] == long_content
+
+    def test_short_tool_results_untouched(self):
+        messages = [
+            self._tool_msg("short", 1),
+            self._tool_msg("tiny", 2),
+        ]
+        result = clear_stale_tool_results(messages, keep_recent=1, truncate_to=50)
+        assert result[0]["content"] == "short"
+        assert result[1]["content"] == "tiny"
+
+    def test_keep_recent_boundary(self):
+        long = "B" * 500
+        messages = [self._tool_msg(long, i) for i in range(5)]
+        result = clear_stale_tool_results(messages, keep_recent=3)
+        assert result[0]["content"].startswith("[Result truncated:")
+        assert result[1]["content"].startswith("[Result truncated:")
+        assert result[2]["content"] == long
+        assert result[3]["content"] == long
+        assert result[4]["content"] == long
+
+    def test_empty_messages(self):
+        result = clear_stale_tool_results([])
+        assert result == []
+
+    def test_no_tool_messages(self):
+        messages = [self._user_msg("hi"), self._assistant_msg("ok")]
+        result = clear_stale_tool_results(messages, keep_recent=2)
+        assert result == messages
+
+    def test_non_string_content_ignored(self):
+        messages = [
+            {"role": "tool", "content": None, "tool_call_id": "t1"},
+            {"role": "tool", "content": 123, "tool_call_id": "t2"},
+        ]
+        result = clear_stale_tool_results(messages, keep_recent=0, truncate_to=10)
+        assert result[0]["content"] is None
+        assert result[1]["content"] == 123
+
+    def test_truncated_placeholder_includes_length(self):
+        long = "C" * 1000
+        messages = [self._tool_msg(long, 1)]
+        result = clear_stale_tool_results(messages, keep_recent=0, truncate_to=50)
+        assert "[Result truncated: 1000 chars]" in result[0]["content"]
+
+    def test_other_roles_untouched(self):
+        messages = [
+            self._user_msg("D" * 500),
+            self._assistant_msg("E" * 500),
+            self._tool_msg("F" * 500, 1),
+        ]
+        result = clear_stale_tool_results(messages, keep_recent=0, truncate_to=50)
+        assert result[0]["content"] == "D" * 500
+        assert result[1]["content"] == "E" * 500

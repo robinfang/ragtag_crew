@@ -37,6 +37,17 @@ class Settings(BaseSettings):
     session_summary_trigger_messages: int = 18
     session_summary_recent_messages: int = 12
     session_summary_max_chars: int = 4000
+    tool_result_keep_recent: int = 8
+
+    # Verify (two-stage: draft + verify)
+    verify_enabled: bool = False
+    verify_max_turns: int = 3
+    verify_commands: str = "ruff check . && pytest tests/ -x -q"
+    verify_prompt: str = (
+        "你在上一步修改了文件。请运行以下命令验证修改是否正确：\n"
+        "{commands}\n\n"
+        "如果验证失败，请分析错误并修复。如果验证通过，确认修改完成。"
+    )
     external_tool_timeout: int = 30
     mcp_servers_file: str = "mcp_servers.local.json"
     openapi_tools_file: str = "openapi_tools.local.json"

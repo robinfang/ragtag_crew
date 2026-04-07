@@ -14,10 +14,15 @@ from typing import Any, Callable, Awaitable
 
 from ragtag_crew.config import settings
 from ragtag_crew.context_builder import build_system_prompt
-from ragtag_crew.errors import LLMChunkTimeoutError, LLMTimeoutError, TurnTimeoutError, UserAbortedError
+from ragtag_crew.errors import (
+    LLMChunkTimeoutError,
+    LLMTimeoutError,
+    TurnTimeoutError,
+    UserAbortedError,
+)
 from ragtag_crew.external.browser_agent import browser_execution_context
 from ragtag_crew.llm import stream_chat, LLMResponse, ToolCall
-from ragtag_crew.session_summary import compact_history
+from ragtag_crew.session_summary import clear_stale_tool_results, compact_history
 from ragtag_crew.tools import Tool, build_tool_schemas, get_tool
 
 log = logging.getLogger(__name__)
@@ -69,7 +74,11 @@ class AgentSession:
         self.recent_message_count = recent_message_count
         self.browser_mode = browser_mode
         self.browser_attached_confirmed = browser_attached_confirmed
-        self.planning_enabled = planning_enabled if planning_enabled is not None else settings.planning_enabled
+        self.planning_enabled = (
+            planning_enabled
+            if planning_enabled is not None
+            else settings.planning_enabled
+        )
         self.messages: list[dict[str, Any]] = []
 
         self._callbacks: list[EventCallback] = []
@@ -99,7 +108,9 @@ class AgentSession:
         if self._active_started_at is not None:
             lines.append(f"已运行: {self._format_elapsed(self._active_started_at)}")
         if self._active_request_text:
-            lines.append(f"当前请求: {self._clip_progress_text(self._active_request_text, 80)}")
+            lines.append(
+                f"当前请求: {self._clip_progress_text(self._active_request_text, 80)}"
+            )
         if self._active_turn:
             lines.append(f"当前轮次: {self._active_turn}")
         if self._completed_turns:
@@ -155,7 +166,9 @@ class AgentSession:
         before_messages = list(self.messages)
         before_summary = self.session_summary
         self._maybe_compact_history(force=force)
-        return self.messages != before_messages or self.session_summary != before_summary
+        return (
+            self.messages != before_messages or self.session_summary != before_summary
+        )
 
     # -- core loop ----------------------------------------------------------
 
@@ -178,6 +191,7 @@ class AgentSession:
         self._response_preview = ""
         self._active_request_text = self._clip_progress_text(text, 120)
         self.messages.append({"role": "user", "content": text})
+        msg_before_prompt = len(self.messages) - 1
 
         await self._emit("agent_start")
         final_content = ""
@@ -201,6 +215,15 @@ class AgentSession:
             log.exception("Agent loop error")
             await self._emit("error", error=exc)
             raise
+        else:
+            if (
+                settings.verify_enabled
+                and final_content
+                and self._detect_file_modifications(msg_before_prompt)
+            ):
+                final_content = await self._run_verify_phase()
+
+            return final_content
         finally:
             self._maybe_compact_history()
             self._busy = False
@@ -209,8 +232,6 @@ class AgentSession:
             self._active_tool_name = None
             self._active_request_text = ""
             await self._emit("agent_end", content=final_content)
-
-        return final_content
 
     async def _on_text_delta(self, delta: str) -> None:
         if delta:
@@ -272,6 +293,10 @@ class AgentSession:
             return
 
         self.messages = recent_messages
+        self.messages = clear_stale_tool_results(
+            self.messages,
+            keep_recent=settings.tool_result_keep_recent,
+        )
         self.session_summary = summary
         self.summary_updated_at = time.time()
         self.recent_message_count = len(self.messages)
@@ -310,11 +335,47 @@ class AgentSession:
             return "ABORTED"
         return result
 
-    async def _run_loop(self) -> str:
+    _MODIFYING_TOOLS = frozenset({"write_file", "edit_file", "delete_file"})
+
+    def _detect_file_modifications(self, since_index: int) -> bool:
+        for msg in self.messages[since_index:]:
+            if (
+                msg.get("role") == "tool"
+                and msg.get("tool_name") in self._MODIFYING_TOOLS
+            ):
+                return True
+        return False
+
+    async def _run_verify_phase(self) -> str:
+        commands = settings.verify_commands.strip()
+        if not commands:
+            return self._response_preview or ""
+        prompt_text = settings.verify_prompt.format(commands=commands)
+        self.messages.append({"role": "user", "content": prompt_text})
+        log.info("[verify] injected verification prompt (%d chars)", len(prompt_text))
+        try:
+            content = await asyncio.wait_for(
+                self._run_loop(max_turns=settings.verify_max_turns),
+                timeout=settings.turn_timeout,
+            )
+        except (LLMTimeoutError, LLMChunkTimeoutError):
+            raise
+        except UserAbortedError:
+            await self._emit("cancelled")
+            raise
+        except asyncio.TimeoutError:
+            self._abort_event.set()
+            raise
+        except Exception:
+            log.exception("[verify] verification phase error, ignoring")
+            content = self._response_preview or ""
+        return content or self._response_preview or ""
+
+    async def _run_loop(self, max_turns: int | None = None) -> str:
         tool_schemas = build_tool_schemas(self.tools) if self.tools else None
         last_content = ""
 
-        for turn in range(1, settings.max_turns + 1):
+        for turn in range(1, (max_turns or settings.max_turns) + 1):
             if self._abort_event.is_set():
                 raise UserAbortedError()
 
@@ -333,7 +394,9 @@ class AgentSession:
             except (LLMTimeoutError, LLMChunkTimeoutError) as exc:
                 response = exc.partial_response or LLMResponse()
                 if response.content:
-                    self._response_preview = self._clip_progress_text(response.content, 160)
+                    self._response_preview = self._clip_progress_text(
+                        response.content, 160
+                    )
                 await self._emit("message_end", content=response.content)
                 self._append_assistant_message(response)
                 last_content = response.content

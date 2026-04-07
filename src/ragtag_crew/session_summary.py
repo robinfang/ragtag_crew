@@ -7,6 +7,34 @@ from typing import Any
 
 _SUMMARY_TEXT_LIMIT = 500
 _TOOL_ARG_KEYS = ("path", "file", "file_path", "query", "pattern", "url", "search")
+_STALE_TRUNCATE_LIMIT = 200
+
+
+def clear_stale_tool_results(
+    messages: list[dict[str, Any]],
+    *,
+    keep_recent: int = 8,
+    truncate_to: int = _STALE_TRUNCATE_LIMIT,
+) -> list[dict[str, Any]]:
+    result = list(messages)
+    tool_indices: list[int] = [
+        i for i, m in enumerate(result) if m.get("role") == "tool"
+    ]
+    if keep_recent <= 0:
+        stale_indices = tool_indices
+    elif len(tool_indices) <= keep_recent:
+        return result
+    else:
+        stale_indices = tool_indices[:-keep_recent]
+    for idx in stale_indices:
+        content = result[idx].get("content", "")
+        if isinstance(content, str) and len(content) > truncate_to:
+            placeholder = _clip(" ".join(content.split()), truncate_to)
+            result[idx] = {
+                **result[idx],
+                "content": f"[Result truncated: {len(content)} chars] {placeholder}",
+            }
+    return result
 
 
 def compact_history(
