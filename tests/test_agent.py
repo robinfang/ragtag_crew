@@ -351,6 +351,76 @@ class AgentSessionTests(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(len(verify_msgs), 0)
 
+    async def test_external_tool_result_gets_source_prefix(self) -> None:
+        async def external_stream(**kwargs):  # type: ignore[no-untyped-def]
+            return LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(id="c1", name="web_search", arguments={"query": "abc"})
+                ],
+            )
+
+        async def search_execute(**kwargs):  # type: ignore[no-untyped-def]
+            return "URL: https://example.com/result"
+
+        search_tool = Tool(
+            "web_search",
+            "search",
+            {"type": "object"},
+            search_execute,
+            source_type="search",
+            source_name="serper",
+        )
+
+        with (
+            patch("ragtag_crew.agent.get_tool", return_value=search_tool),
+            patch(
+                "ragtag_crew.agent.stream_chat",
+                side_effect=[await external_stream(), LLMResponse(content="done")],
+            ),
+        ):
+            session = AgentSession(model="openai/GLM-5.1", tools=[search_tool])
+            await session.prompt("search this")
+
+        tool_messages = [m for m in session.messages if m.get("role") == "tool"]
+        self.assertEqual(len(tool_messages), 1)
+        self.assertTrue(tool_messages[0]["content"].startswith("[来源: search/serper]"))
+
+    async def test_builtin_tool_result_has_no_source_prefix(self) -> None:
+        async def builtin_stream(**kwargs):  # type: ignore[no-untyped-def]
+            return LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(id="c1", name="read", arguments={"path": "a.txt"})
+                ],
+            )
+
+        async def read_execute(**kwargs):  # type: ignore[no-untyped-def]
+            return "plain content"
+
+        read_tool = Tool(
+            "read",
+            "read",
+            {"type": "object"},
+            read_execute,
+            source_type="builtin",
+            source_name="builtin",
+        )
+
+        with (
+            patch("ragtag_crew.agent.get_tool", return_value=read_tool),
+            patch(
+                "ragtag_crew.agent.stream_chat",
+                side_effect=[await builtin_stream(), LLMResponse(content="done")],
+            ),
+        ):
+            session = AgentSession(model="openai/GLM-5.1", tools=[read_tool])
+            await session.prompt("read this")
+
+        tool_messages = [m for m in session.messages if m.get("role") == "tool"]
+        self.assertEqual(len(tool_messages), 1)
+        self.assertEqual(tool_messages[0]["content"], "plain content")
+
 
 if __name__ == "__main__":
     unittest.main()

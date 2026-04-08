@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 _SUMMARY_TEXT_LIMIT = 500
 _TOOL_ARG_KEYS = ("path", "file", "file_path", "query", "pattern", "url", "search")
 _STALE_TRUNCATE_LIMIT = 200
+_URL_RE = re.compile(r"https?://[^\s\]\)>,;]+")
+_WINDOWS_PATH_RE = re.compile(r"\b[A-Za-z]:\\[^\s\]\)>,;]+")
+_UNIX_PATH_RE = re.compile(r"(?<![A-Za-z0-9._-])/(?:[^\s\]\)>,;:]+/?)+")
 
 
 def clear_stale_tool_results(
@@ -179,18 +183,18 @@ def _tool_label(tool_name: str, source_type: str, source_name: str) -> str:
     return "/".join(parts)
 
 
-def _extract_external_refs(value: Any, limit: int = 3) -> str:
+def _extract_external_refs(value: Any, limit: int = 5) -> str:
     if not isinstance(value, str) or not value:
         return ""
-    urls: list[str] = []
-    for token in value.split():
-        if token.startswith("http://") or token.startswith("https://"):
-            cleaned = token.rstrip(",.;)]}\"'")
-            if cleaned not in urls:
-                urls.append(cleaned)
-        if len(urls) >= limit:
-            break
-    return ", ".join(urls)
+    refs: list[str] = []
+    for pattern in (_URL_RE, _WINDOWS_PATH_RE, _UNIX_PATH_RE):
+        for match in pattern.finditer(value):
+            cleaned = match.group(0).rstrip(",.;)]}\"'")
+            if cleaned not in refs:
+                refs.append(cleaned)
+            if len(refs) >= limit:
+                return ", ".join(refs)
+    return ", ".join(refs)
 
 
 def _clip_text(value: Any, limit: int = _SUMMARY_TEXT_LIMIT) -> str:

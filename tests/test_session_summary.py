@@ -5,6 +5,7 @@ import pytest
 from ragtag_crew.session_summary import (
     _clip,
     _clip_text,
+    _extract_external_refs,
     _merge_summary,
     _summarize_message,
     _tool_call_label,
@@ -200,6 +201,42 @@ class TestSummarizeMessage:
     def test_unknown_role(self):
         msg = {"role": "system", "content": "be helpful"}
         assert _summarize_message(msg) == ""
+
+
+class TestExtractExternalRefs:
+    def test_extract_urls(self):
+        text = "See https://example.com/a and https://example.com/b."
+        refs = _extract_external_refs(text)
+        assert "https://example.com/a" in refs
+        assert "https://example.com/b" in refs
+
+    def test_extract_windows_path(self):
+        text = (
+            r"Open Z:\agentworkspace\ragtag_crew\src\ragtag_crew\agent.py for details"
+        )
+        refs = _extract_external_refs(text)
+        assert r"Z:\agentworkspace\ragtag_crew\src\ragtag_crew\agent.py" in refs
+
+    def test_extract_unix_path(self):
+        text = "check /usr/local/bin/agent-browser and /tmp/test.txt"
+        refs = _extract_external_refs(text)
+        assert "/usr/local/bin/agent-browser" in refs
+        assert "/tmp/test.txt" in refs
+
+    def test_extract_mixed_and_dedup(self):
+        text = (
+            "https://example.com/a Z:\\repo\\a.py /tmp/test.txt "
+            "https://example.com/a Z:\\repo\\a.py"
+        )
+        refs = _extract_external_refs(text)
+        assert refs.count("https://example.com/a") == 1
+        assert refs.count(r"Z:\repo\a.py") == 1
+        assert refs.count("/tmp/test.txt") == 1
+
+    def test_extract_limit(self):
+        text = " ".join(f"https://example.com/{i}" for i in range(10))
+        refs = _extract_external_refs(text)
+        assert len(refs.split(", ")) == 5
 
 
 class TestMergeSummary:

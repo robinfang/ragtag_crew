@@ -431,6 +431,10 @@ class AgentSession:
                 await self._emit("tool_execution_end", tool_call=tc, result=result)
 
                 tool_meta = get_tool(tc.name)
+                content = result
+                if tool_meta.source_type not in {"local", "builtin"}:
+                    source_name = tool_meta.source_name or tool_meta.name
+                    content = f"[来源: {tool_meta.source_type}/{source_name}]\n{result}"
                 self.messages.append(
                     {
                         "role": "tool",
@@ -438,7 +442,7 @@ class AgentSession:
                         "tool_name": tc.name,
                         "tool_source_type": tool_meta.source_type,
                         "tool_source_name": tool_meta.source_name,
-                        "content": result,
+                        "content": content,
                     }
                 )
 
