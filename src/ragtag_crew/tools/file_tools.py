@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from ragtag_crew.memory_store import search_memory
 from ragtag_crew.tools import Tool, register_tool
 from ragtag_crew.tools.path_utils import resolve_path, resolve_read_path
 
 
 # ---- read -----------------------------------------------------------------
+
 
 async def _read_file(path: str, offset: int = 1, limit: int = 2000) -> str:
     resolved = resolve_read_path(path)
@@ -21,9 +23,7 @@ async def _read_file(path: str, offset: int = 1, limit: int = 2000) -> str:
     total = len(lines)
     start = max(offset - 1, 0)
     selected = lines[start : start + limit]
-    numbered = "".join(
-        f"{start + i + 1:6d}\t{line}" for i, line in enumerate(selected)
-    )
+    numbered = "".join(f"{start + i + 1:6d}\t{line}" for i, line in enumerate(selected))
     header = f"({total} lines total)\n" if total > limit else ""
     return header + numbered
 
@@ -59,6 +59,7 @@ read_tool = register_tool(
 
 
 # ---- write ----------------------------------------------------------------
+
 
 async def _write_file(path: str, content: str) -> str:
     resolved = resolve_path(path)
@@ -97,6 +98,7 @@ write_tool = register_tool(
 
 
 # ---- edit -----------------------------------------------------------------
+
 
 async def _edit_file(path: str, old_string: str, new_string: str) -> str:
     resolved = resolve_path(path)
@@ -154,6 +156,7 @@ edit_tool = register_tool(
 
 # ---- delete ---------------------------------------------------------------
 
+
 async def _delete_file(path: str) -> str:
     try:
         resolved = resolve_path(path)
@@ -192,5 +195,51 @@ delete_file_tool = register_tool(
             "required": ["path"],
         },
         execute=_delete_file,
+    )
+)
+
+
+# ---- memory search ---------------------------------------------------------
+
+
+async def _memory_search(query: str, limit: int = 5) -> str:
+    try:
+        hits = search_memory(query, limit=limit)
+    except ValueError as exc:
+        return f"ERROR: {exc}"
+
+    if not hits:
+        return f"No memory results found for: {query}"
+
+    lines = [f"Memory search results for: {query}"]
+    for index, hit in enumerate(hits, start=1):
+        lines.append(f"{index}. {hit.file_name}:{hit.line}")
+        lines.append(f"   {hit.snippet}")
+    return "\n".join(lines)
+
+
+memory_search_tool = register_tool(
+    Tool(
+        name="memory_search",
+        description=(
+            "Search MEMORY.md and memory/*.md for relevant notes. "
+            "Use this when you need prior long-term project knowledge."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query for memory files",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of results to return",
+                },
+            },
+            "required": ["query"],
+        },
+        execute=_memory_search,
+        enabled_in_presets=("coding", "readonly"),
     )
 )

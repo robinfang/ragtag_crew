@@ -91,7 +91,10 @@ class ToolPresetTests(unittest.TestCase):
 
     def test_readonly_preset_contains_only_safe_tools(self) -> None:
         tools = get_tools_for_preset("readonly")
-        self.assertEqual([tool.name for tool in tools], ["read", "grep", "find", "ls"])
+        self.assertEqual(
+            [tool.name for tool in tools],
+            ["read", "grep", "find", "ls", "memory_search"],
+        )
 
     def test_dynamic_tool_can_join_preset_via_metadata(self) -> None:
         async def _execute() -> str:
@@ -120,7 +123,9 @@ class SearchToolTests(unittest.IsolatedAsyncioTestCase):
             (root / "visible").mkdir()
             (root / "visible" / "main.py").write_text("print('ok')\n", encoding="utf-8")
             (root / ".venv").mkdir()
-            (root / ".venv" / "hidden.py").write_text("print('hidden')\n", encoding="utf-8")
+            (root / ".venv" / "hidden.py").write_text(
+                "print('hidden')\n", encoding="utf-8"
+            )
             (root / "__pycache__").mkdir()
             (root / "__pycache__" / "cached.pyc").write_bytes(b"x")
 
@@ -137,11 +142,15 @@ class SearchToolTests(unittest.IsolatedAsyncioTestCase):
     async def test_grep_python_fallback_respects_include_filter(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            (root / "app.py").write_text("def main():\n    return 1\n", encoding="utf-8")
+            (root / "app.py").write_text(
+                "def main():\n    return 1\n", encoding="utf-8"
+            )
             (root / "notes.txt").write_text("def main in text\n", encoding="utf-8")
 
             with working_dir(root):
-                with patch("ragtag_crew.tools.search_tools._get_rg_path", return_value=None):
+                with patch(
+                    "ragtag_crew.tools.search_tools._get_rg_path", return_value=None
+                ):
                     result = await search_tools._grep_search("def main", ".", "*.py")
 
             self.assertIn("app.py:1: def main():", result)
@@ -154,7 +163,8 @@ class SearchToolTests(unittest.IsolatedAsyncioTestCase):
 
             with working_dir(root):
                 with patch(
-                    "ragtag_crew.tools.search_tools._get_rg_path", return_value="/usr/bin/rg"
+                    "ragtag_crew.tools.search_tools._get_rg_path",
+                    return_value="/usr/bin/rg",
                 ):
                     mock_instance = await self._create_mock_proc(b"hello.py\n", b"")
                     with patch(
@@ -170,7 +180,8 @@ class SearchToolTests(unittest.IsolatedAsyncioTestCase):
 
             with working_dir(root):
                 with patch(
-                    "ragtag_crew.tools.search_tools._get_rg_path", return_value="/nonexistent/rg"
+                    "ragtag_crew.tools.search_tools._get_rg_path",
+                    return_value="/nonexistent/rg",
                 ):
                     with patch(
                         "ragtag_crew.tools.search_tools.asyncio.create_subprocess_exec",
@@ -186,7 +197,9 @@ class SearchToolTests(unittest.IsolatedAsyncioTestCase):
             (root / "test.py").write_text("# test\n", encoding="utf-8")
 
             with working_dir(root):
-                with patch("ragtag_crew.tools.search_tools._get_rg_path", return_value=None):
+                with patch(
+                    "ragtag_crew.tools.search_tools._get_rg_path", return_value=None
+                ):
                     result = await search_tools._find_files("*.py", ".")
 
             self.assertIn("test.py", result)
@@ -217,7 +230,9 @@ class ShellDeleteBlockTests(unittest.TestCase):
         self.assertIn("ERROR", shell_tools._check_delete_attempt("rmdir empty_dir"))
 
     def test_bash_blocks_remove_item(self) -> None:
-        self.assertIn("ERROR", shell_tools._check_delete_attempt("Remove-Item file.txt"))
+        self.assertIn(
+            "ERROR", shell_tools._check_delete_attempt("Remove-Item file.txt")
+        )
 
     def test_bash_blocks_rm_rf(self) -> None:
         self.assertIn("ERROR", shell_tools._check_delete_attempt("rm -rf /tmp/stuff"))

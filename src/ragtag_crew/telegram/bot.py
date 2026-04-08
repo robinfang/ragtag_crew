@@ -35,6 +35,7 @@ from ragtag_crew.memory_store import (
     promote_inbox,
     read_memory_file,
     read_memory_index,
+    search_memory,
 )
 from ragtag_crew.model_validation import validate_model
 from ragtag_crew.skill_loader import get_skill, list_skills
@@ -438,7 +439,7 @@ async def _cmd_memory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             f"{index_text}\n\n"
             "Memory files:\n"
             f"{file_block}\n\n"
-            "Usage: /memory list | /memory show <name> | /memory add <note> | /memory promote [target]"
+            "Usage: /memory list | /memory show <name> | /memory search <query> | /memory add <note> | /memory promote [target]"
         )
         return
 
@@ -465,6 +466,26 @@ async def _cmd_memory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             return
         content = _truncate_reply(content) if content else "(empty)"
         await update.message.reply_text(content)
+        return
+
+    if action == "search":
+        query = " ".join(args[1:]).strip()
+        if not query:
+            await update.message.reply_text("Usage: /memory search <query>")
+            return
+        try:
+            hits = search_memory(query)
+        except ValueError as exc:
+            await update.message.reply_text(str(exc))
+            return
+        if not hits:
+            await update.message.reply_text(f"No memory results found for: {query}")
+            return
+        lines = [f"Memory search results for: {query}"]
+        for index, hit in enumerate(hits, start=1):
+            lines.append(f"{index}. {hit.file_name}:{hit.line}")
+            lines.append(f"   {hit.snippet}")
+        await update.message.reply_text("\n".join(lines))
         return
 
     if action == "add":
@@ -512,7 +533,7 @@ async def _cmd_memory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     await update.message.reply_text(
-        "Usage: /memory list | /memory show <name> | /memory add <note> | /memory promote [target]"
+        "Usage: /memory list | /memory show <name> | /memory search <query> | /memory add <note> | /memory promote [target]"
     )
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import tempfile
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -12,6 +13,14 @@ from ragtag_crew.config import settings
 from ragtag_crew.context_builder import load_memory_index
 
 _TIMESTAMPED_NOTE_RE = re.compile(r"^-\s+\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\s+(.*)$")
+
+
+@dataclass(frozen=True)
+class MemoryHit:
+    file_name: str
+    line: int
+    snippet: str
+    score: int
 
 
 def _memory_dir() -> Path:
@@ -133,6 +142,66 @@ def _memory_note_exists(note: str) -> Path | None:
         if note in _extract_normalized_notes(content):
             return path
     return None
+
+
+def _memory_search_paths() -> list[Path]:
+    candidates: list[Path] = []
+    index_path = _memory_index_path()
+    if index_path.exists():
+        candidates.append(index_path)
+
+    memory_root = _memory_dir()
+    if memory_root.exists():
+        candidates.extend(
+            path
+            for path in sorted(
+                memory_root.glob("*.md"), key=lambda item: item.name.lower()
+            )
+            if path.name.lower() != "readme.md"
+        )
+    return candidates
+
+
+def search_memory(query: str, limit: int = 5) -> list[MemoryHit]:
+    query = query.strip()
+    if not query:
+        raise ValueError("Memory search query is empty")
+
+    query_lower = query.lower()
+    hits: list[MemoryHit] = []
+    for path in _memory_search_paths():
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except Exception:
+            continue
+        file_name_lower = path.name.lower()
+        for index, raw_line in enumerate(lines, start=1):
+            line = raw_line.strip()
+            if not line:
+                continue
+            line_lower = line.lower()
+            if query_lower not in line_lower and query_lower not in file_name_lower:
+                continue
+
+            score = 0
+            if query_lower in file_name_lower:
+                score += 3
+            if line.startswith("#"):
+                score += 2
+            if query_lower in line_lower:
+                score += 1
+
+            hits.append(
+                MemoryHit(
+                    file_name=path.name,
+                    line=index,
+                    snippet=line,
+                    score=score,
+                )
+            )
+
+    hits.sort(key=lambda item: (-item.score, item.file_name.lower(), item.line))
+    return hits[: max(limit, 1)]
 
 
 def list_memory_files() -> list[str]:

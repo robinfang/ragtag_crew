@@ -62,6 +62,9 @@ class SkillLoaderTests(unittest.TestCase):
         self.assertIn("base prompt", messages[0]["content"])
         self.assertIn("## Active Skills", messages[0]["content"])
         self.assertIn("Focus on bugs first.", messages[0]["content"])
+        self.assertIn("review.md", messages[0]["content"])
+        self.assertIn("Use the read tool", messages[0]["content"])
+        self.assertNotIn("# Review", messages[0]["content"])
 
     def test_get_skill_raises_for_unknown_name(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

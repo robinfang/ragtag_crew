@@ -7,12 +7,14 @@ from pathlib import Path
 
 from ragtag_crew.config import settings
 from ragtag_crew.memory_store import (
+    MemoryHit,
     append_memory_note,
     append_memory_note_if_missing,
     list_memory_files,
     promote_inbox,
     read_memory_file,
     read_memory_index,
+    search_memory,
 )
 
 
@@ -161,6 +163,51 @@ class MemoryStoreTests(unittest.TestCase):
         self.assertEqual(count, 1)
         self.assertIn("# Project Decisions", target_content)
         self.assertIn("decision note", target_content)
+
+    def test_search_memory_finds_index_and_named_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            memory_root = root / "memory"
+            memory_root.mkdir()
+            (root / "MEMORY.md").write_text(
+                "# Memory\n\npython packaging", encoding="utf-8"
+            )
+            (memory_root / "preferences.md").write_text(
+                "python style note", encoding="utf-8"
+            )
+            with memory_paths(root):
+                hits = search_memory("python")
+
+        self.assertGreaterEqual(len(hits), 2)
+        self.assertTrue(all(isinstance(hit, MemoryHit) for hit in hits))
+        self.assertEqual(hits[0].file_name, "MEMORY.md")
+
+    def test_search_memory_limit_applies(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            memory_root = root / "memory"
+            memory_root.mkdir()
+            (root / "MEMORY.md").write_text("alpha\nbeta\ngamma", encoding="utf-8")
+            (memory_root / "preferences.md").write_text(
+                "alpha\nalpha", encoding="utf-8"
+            )
+            with memory_paths(root):
+                hits = search_memory("a", limit=2)
+
+        self.assertEqual(len(hits), 2)
+
+    def test_search_memory_raises_for_empty_query(self) -> None:
+        with self.assertRaises(ValueError):
+            search_memory("   ")
+
+    def test_search_memory_returns_empty_when_no_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "MEMORY.md").write_text("short memory index", encoding="utf-8")
+            with memory_paths(root):
+                hits = search_memory("missing")
+
+        self.assertEqual(hits, [])
 
 
 if __name__ == "__main__":

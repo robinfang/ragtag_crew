@@ -69,10 +69,22 @@ def get_skill(name: str) -> SkillDefinition:
     raise KeyError(f"Unknown skill: {name}")
 
 
-def render_skill_prompt(skill_names: list[str]) -> str:
-    """Render active skills into one prompt block."""
+def render_skill_catalog_prompt(skill_names: list[str]) -> str:
+    """Render active skills as lightweight summaries, not full content."""
+    root = _skills_dir()
     parts: list[str] = []
+    parts.append(
+        "Active local skills are available as Markdown files. "
+        "Use the read tool to inspect a skill file only when you need full instructions."
+    )
     for name in skill_names:
         skill = get_skill(name)
-        parts.append(f"## Skill: {skill.name}\n{skill.content}")
+        try:
+            display_path = (
+                skill.path.resolve().relative_to(root.parent.resolve()).as_posix()
+            )
+        except ValueError:
+            display_path = str(skill.path.resolve())
+        summary = skill.summary or "(no summary)"
+        parts.append(f"- {skill.name}: {summary} (file: {display_path})")
     return "\n\n".join(parts)

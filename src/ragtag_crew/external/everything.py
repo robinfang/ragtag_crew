@@ -7,15 +7,10 @@ import platform
 from pathlib import Path
 
 from ragtag_crew.config import settings
+from ragtag_crew.external._utils import truncate_output
 from ragtag_crew.external.base import CapabilityStatus
 from ragtag_crew.tools import Tool, register_tool
 from ragtag_crew.tools.path_utils import resolve_path
-
-_OUTPUT_LIMIT = 50_000
-
-
-def _truncate(text: str) -> str:
-    return text if len(text) <= _OUTPUT_LIMIT else text[:_OUTPUT_LIMIT] + "\n...[truncated]"
 
 
 def _build_everything_command(query: str, path: str, max_results: int) -> list[str]:
@@ -33,7 +28,9 @@ def _build_everything_command(query: str, path: str, max_results: int) -> list[s
     ]
 
 
-async def _everything_search(query: str, path: str = ".", max_results: int | None = None) -> str:
+async def _everything_search(
+    query: str, path: str = ".", max_results: int | None = None
+) -> str:
     if not settings.everything_enabled:
         return "ERROR: Everything integration is disabled."
     if platform.system() != "Windows":
@@ -62,7 +59,9 @@ async def _everything_search(query: str, path: str = ".", max_results: int | Non
     except asyncio.TimeoutError:
         proc.kill()
         await proc.communicate()
-        return f"ERROR: Everything search timed out after {settings.everything_timeout}s."
+        return (
+            f"ERROR: Everything search timed out after {settings.everything_timeout}s."
+        )
     except asyncio.CancelledError:
         proc.kill()
         await proc.communicate()
@@ -75,7 +74,7 @@ async def _everything_search(query: str, path: str = ".", max_results: int | Non
         return f"ERROR: {detail}"
     if not output:
         return "No matches found."
-    return _truncate(output)
+    return truncate_output(output)
 
 
 def register_everything_tool() -> CapabilityStatus:

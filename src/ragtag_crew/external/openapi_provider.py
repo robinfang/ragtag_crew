@@ -10,10 +10,9 @@ from typing import Any
 from urllib import error, parse, request
 
 from ragtag_crew.config import settings
+from ragtag_crew.external._utils import clip_text, truncate_output
 from ragtag_crew.external.base import CapabilityStatus
 from ragtag_crew.tools import Tool, register_tool
-
-_OUTPUT_LIMIT = 50_000
 
 
 @dataclass(frozen=True)
@@ -23,7 +22,9 @@ class OpenAPIToolConfig:
     path: str
     method: str = "POST"
     presets: tuple[str, ...] = ("coding",)
-    parameters: dict[str, Any] = field(default_factory=lambda: {"type": "object", "properties": {}})
+    parameters: dict[str, Any] = field(
+        default_factory=lambda: {"type": "object", "properties": {}}
+    )
     request_body: dict[str, Any] | None = None
     query_params: dict[str, Any] | None = None
     result_mode: str = "json"
@@ -40,18 +41,6 @@ class OpenAPIProviderConfig:
     headers: dict[str, str] = field(default_factory=dict)
     enabled: bool = True
     tools: tuple[OpenAPIToolConfig, ...] = ()
-
-
-def _truncate(text: str) -> str:
-    return text if len(text) <= _OUTPUT_LIMIT else text[:_OUTPUT_LIMIT] + "\n...[truncated]"
-
-
-def _clip(value: Any, limit: int = 240) -> str:
-    text = value if isinstance(value, str) else ""
-    text = " ".join(text.split())
-    if len(text) <= limit:
-        return text
-    return text[: limit - 3].rstrip() + "..."
 
 
 def _config_path() -> Path:
@@ -72,7 +61,9 @@ def _render_template(template: Any, arguments: dict[str, Any]) -> Any:
     if isinstance(template, str) and template.startswith("$"):
         return arguments.get(template[1:])
     if isinstance(template, dict):
-        return _clean_value({key: _render_template(value, arguments) for key, value in template.items()})
+        return _clean_value(
+            {key: _render_template(value, arguments) for key, value in template.items()}
+        )
     if isinstance(template, list):
         return _clean_value([_render_template(value, arguments) for value in template])
     return template
@@ -84,7 +75,9 @@ def load_openapi_provider_configs() -> list[OpenAPIProviderConfig]:
         return []
 
     payload = json.loads(path.read_text(encoding="utf-8"))
-    raw_providers = payload.get("providers", []) if isinstance(payload, dict) else payload
+    raw_providers = (
+        payload.get("providers", []) if isinstance(payload, dict) else payload
+    )
     providers: list[OpenAPIProviderConfig] = []
     for item in raw_providers:
         if not isinstance(item, dict):
@@ -101,10 +94,13 @@ def load_openapi_provider_configs() -> list[OpenAPIProviderConfig]:
                     path=str(raw_tool.get("path", "")).strip(),
                     method=str(raw_tool.get("method", "POST")).upper(),
                     presets=tuple(raw_tool.get("presets", ["coding"])),
-                    parameters=raw_tool.get("parameters") or {"type": "object", "properties": {}},
+                    parameters=raw_tool.get("parameters")
+                    or {"type": "object", "properties": {}},
                     request_body=raw_tool.get("request_body"),
                     query_params=raw_tool.get("query_params"),
-                    result_mode=str(raw_tool.get("result_mode", "json")).strip().lower(),
+                    result_mode=str(raw_tool.get("result_mode", "json"))
+                    .strip()
+                    .lower(),
                     timeout=raw_tool.get("timeout"),
                 )
             )
@@ -115,7 +111,10 @@ def load_openapi_provider_configs() -> list[OpenAPIProviderConfig]:
                 api_key=str(item.get("api_key", "")).strip(),
                 auth_header=str(item.get("auth_header", "Authorization")).strip(),
                 auth_scheme=str(item.get("auth_scheme", "Bearer")).strip(),
-                headers={str(key): str(value) for key, value in (item.get("headers") or {}).items()},
+                headers={
+                    str(key): str(value)
+                    for key, value in (item.get("headers") or {}).items()
+                },
                 enabled=bool(item.get("enabled", True)),
                 tools=tuple(tools),
             )
@@ -123,7 +122,9 @@ def load_openapi_provider_configs() -> list[OpenAPIProviderConfig]:
     return providers
 
 
-def _build_url(provider: OpenAPIProviderConfig, tool: OpenAPIToolConfig, arguments: dict[str, Any]) -> str:
+def _build_url(
+    provider: OpenAPIProviderConfig, tool: OpenAPIToolConfig, arguments: dict[str, Any]
+) -> str:
     path = tool.path if tool.path.startswith("/") else f"/{tool.path}"
     for key in sorted(arguments.keys(), key=len, reverse=True):
         if arguments[key] is not None:
@@ -147,12 +148,17 @@ def _build_headers(provider: OpenAPIProviderConfig) -> dict[str, str]:
 
 
 def _format_json_result(payload: Any) -> str:
-    return _truncate(json.dumps(payload, ensure_ascii=False, indent=2))
+    return truncate_output(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
 def _format_search_result(payload: Any) -> str:
     if isinstance(payload, dict):
-        raw_items = payload.get("results") or payload.get("items") or payload.get("organic") or []
+        raw_items = (
+            payload.get("results")
+            or payload.get("items")
+            or payload.get("organic")
+            or []
+        )
     elif isinstance(payload, list):
         raw_items = payload
     else:
@@ -164,15 +170,18 @@ def _format_search_result(payload: Any) -> str:
 
     lines = ["OpenAPI search results:"]
     for index, item in enumerate(items, start=1):
-        title = _clip(item.get("title") or item.get("name") or item.get("url"))
-        url = _clip(item.get("url") or item.get("link"), limit=300)
-        snippet = _clip(item.get("snippet") or item.get("summary") or item.get("description"), limit=360)
+        title = clip_text(item.get("title") or item.get("name") or item.get("url"))
+        url = clip_text(item.get("url") or item.get("link"), limit=300)
+        snippet = clip_text(
+            item.get("snippet") or item.get("summary") or item.get("description"),
+            limit=360,
+        )
         lines.append(f"{index}. {title or url or '(untitled)'}")
         if url:
             lines.append(f"   URL: {url}")
         if snippet:
             lines.append(f"   Snippet: {snippet}")
-    return _truncate("\n".join(lines))
+    return truncate_output("\n".join(lines))
 
 
 def _format_response(payload: Any, result_mode: str) -> str:
@@ -191,8 +200,16 @@ def _make_tool_executor(provider: OpenAPIProviderConfig, tool: OpenAPIToolConfig
     async def _execute(**arguments: Any) -> str:
         url = _build_url(provider, tool, arguments)
         headers = _build_headers(provider)
-        body = _render_template(tool.request_body, arguments) if tool.request_body else None
-        data = None if body is None or tool.method == "GET" else json.dumps(body).encode("utf-8")
+        body = (
+            _render_template(tool.request_body, arguments)
+            if tool.request_body
+            else None
+        )
+        data = (
+            None
+            if body is None or tool.method == "GET"
+            else json.dumps(body).encode("utf-8")
+        )
         req = request.Request(url, data=data, headers=headers, method=tool.method)
         timeout = tool.timeout or settings.openapi_timeout
         try:
@@ -228,12 +245,19 @@ def register_openapi_tools() -> list[CapabilityStatus]:
         status_key = f"openapi:{provider.name or 'unnamed'}"
         if not provider.enabled:
             statuses.append(
-                CapabilityStatus(key=status_key, kind="openapi", ready=False, detail="disabled")
+                CapabilityStatus(
+                    key=status_key, kind="openapi", ready=False, detail="disabled"
+                )
             )
             continue
         if not provider.base_url:
             statuses.append(
-                CapabilityStatus(key=status_key, kind="openapi", ready=False, detail="missing base_url")
+                CapabilityStatus(
+                    key=status_key,
+                    kind="openapi",
+                    ready=False,
+                    detail="missing base_url",
+                )
             )
             continue
         registered_names: list[str] = []
@@ -258,7 +282,9 @@ def register_openapi_tools() -> list[CapabilityStatus]:
                 key=status_key,
                 kind="openapi",
                 ready=ready,
-                detail=f"base_url={provider.base_url}" if ready else "no tools configured",
+                detail=f"base_url={provider.base_url}"
+                if ready
+                else "no tools configured",
                 tool_names=tuple(registered_names),
             )
         )

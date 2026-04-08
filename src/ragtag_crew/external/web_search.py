@@ -10,9 +10,8 @@ from urllib import error, request
 
 from ragtag_crew.config import settings
 from ragtag_crew.external.base import CapabilityStatus
+from ragtag_crew.external._utils import clip_text, truncate_output
 from ragtag_crew.tools import Tool, register_tool
-
-_OUTPUT_LIMIT = 50_000
 
 
 @dataclass(frozen=True)
@@ -20,18 +19,6 @@ class SearchResult:
     title: str
     url: str
     snippet: str
-
-
-def _truncate(text: str) -> str:
-    return text if len(text) <= _OUTPUT_LIMIT else text[:_OUTPUT_LIMIT] + "\n...[truncated]"
-
-
-def _clip(value: Any, limit: int = 240) -> str:
-    text = value if isinstance(value, str) else ""
-    text = " ".join(text.split())
-    if len(text) <= limit:
-        return text
-    return text[: limit - 3].rstrip() + "..."
 
 
 def _build_search_request(query: str, num_results: int) -> request.Request:
@@ -67,9 +54,9 @@ def _normalize_search_results(payload: dict[str, Any]) -> list[SearchResult]:
 
     results: list[SearchResult] = []
     for item in items:
-        title = _clip(item.get("title") or item.get("name"))
-        url = _clip(item.get("link") or item.get("url"), limit=300)
-        snippet = _clip(item.get("snippet") or item.get("description"), limit=360)
+        title = clip_text(item.get("title") or item.get("name"))
+        url = clip_text(item.get("link") or item.get("url"), limit=300)
+        snippet = clip_text(item.get("snippet") or item.get("description"), limit=360)
         if not url:
             continue
         results.append(SearchResult(title=title or url, url=url, snippet=snippet))
@@ -86,7 +73,7 @@ def _format_results(query: str, results: list[SearchResult]) -> str:
         lines.append(f"   URL: {result.url}")
         if result.snippet:
             lines.append(f"   Snippet: {result.snippet}")
-    return _truncate("\n".join(lines))
+    return truncate_output("\n".join(lines))
 
 
 async def _web_search(query: str, num_results: int | None = None) -> str:

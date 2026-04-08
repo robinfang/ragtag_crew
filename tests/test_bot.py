@@ -29,7 +29,9 @@ class FakeSentMessage:
 
 
 class FakeMessage:
-    def __init__(self, text: str | None = None, placeholder: FakeSentMessage | None = None) -> None:
+    def __init__(
+        self, text: str | None = None, placeholder: FakeSentMessage | None = None
+    ) -> None:
         self.text = text
         self.reply_calls: list[dict[str, object]] = []
         self._placeholder = placeholder or FakeSentMessage()
@@ -46,7 +48,13 @@ class FakeContext:
 
 
 class FakeUpdate:
-    def __init__(self, user_id: int = 1, chat_id: int = 100, text: str | None = None, placeholder: FakeSentMessage | None = None) -> None:
+    def __init__(
+        self,
+        user_id: int = 1,
+        chat_id: int = 100,
+        text: str | None = None,
+        placeholder: FakeSentMessage | None = None,
+    ) -> None:
         self.effective_user = FakeUser(user_id)
         self.effective_chat = FakeChat(chat_id)
         self.message = FakeMessage(text=text, placeholder=placeholder)
@@ -83,12 +91,15 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         bot_module._sessions[100] = session
         update = FakeUpdate(chat_id=100)
 
-        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
-            "ragtag_crew.telegram.bot.delete_session"
-        ) as delete_session:
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch("ragtag_crew.telegram.bot.delete_session") as delete_session,
+        ):
             await bot_module._cmd_new(update, FakeContext())
 
-        self.assertEqual(update.message.reply_calls[0]["text"], "Please wait — agent is busy.")
+        self.assertEqual(
+            update.message.reply_calls[0]["text"], "Please wait — agent is busy."
+        )
         session.reset.assert_not_awaited()
         delete_session.assert_not_called()
 
@@ -97,9 +108,10 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         bot_module._sessions[100] = session
         update = FakeUpdate(chat_id=100)
 
-        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
-            "ragtag_crew.telegram.bot.delete_session"
-        ) as delete_session:
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch("ragtag_crew.telegram.bot.delete_session") as delete_session,
+        ):
             await bot_module._cmd_new(update, FakeContext())
 
         delete_session.assert_called_once_with(100)
@@ -113,16 +125,23 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True):
             await bot_module._cmd_model(update, FakeContext())
 
-        self.assertIn("Current model: openai/GLM-5.1", update.message.reply_calls[0]["text"])
+        self.assertIn(
+            "Current model: openai/GLM-5.1", update.message.reply_calls[0]["text"]
+        )
 
     async def test_cmd_model_validation_failure_keeps_previous_model(self) -> None:
         session = SimpleNamespace(model="openai/GLM-5.1")
         bot_module._sessions[100] = session
         update = FakeUpdate(chat_id=100)
 
-        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
-            "ragtag_crew.telegram.bot.validate_model", side_effect=RuntimeError("boom")
-        ), patch("ragtag_crew.telegram.bot.save_session") as save_session:
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch(
+                "ragtag_crew.telegram.bot.validate_model",
+                side_effect=RuntimeError("boom"),
+            ),
+            patch("ragtag_crew.telegram.bot.save_session") as save_session,
+        ):
             await bot_module._cmd_model(update, FakeContext(["openai/gpt-4.1"]))
 
         self.assertEqual(session.model, "openai/GLM-5.1")
@@ -134,9 +153,14 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         bot_module._sessions[100] = session
         update = FakeUpdate(chat_id=100)
 
-        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
-            "ragtag_crew.telegram.bot.validate_model", new=AsyncMock(return_value="OK")
-        ), patch("ragtag_crew.telegram.bot.save_session") as save_session:
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch(
+                "ragtag_crew.telegram.bot.validate_model",
+                new=AsyncMock(return_value="OK"),
+            ),
+            patch("ragtag_crew.telegram.bot.save_session") as save_session,
+        ):
             await bot_module._cmd_model(update, FakeContext(["openai/gpt-4.1"]))
 
         self.assertEqual(session.model, "openai/gpt-4.1")
@@ -144,7 +168,10 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Validation reply: OK", update.message.reply_calls[0]["text"])
 
     async def test_cmd_tools_without_args_lists_active_tools(self) -> None:
-        session = SimpleNamespace(tools=[SimpleNamespace(name="read"), SimpleNamespace(name="grep")], tool_preset="coding")
+        session = SimpleNamespace(
+            tools=[SimpleNamespace(name="read"), SimpleNamespace(name="grep")],
+            tool_preset="coding",
+        )
         bot_module._sessions[100] = session
         update = FakeUpdate(chat_id=100)
 
@@ -158,8 +185,12 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         bot_module._sessions[100] = session
         update = FakeUpdate(chat_id=100)
 
-        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
-            "ragtag_crew.telegram.bot.get_tools_for_preset", side_effect=KeyError("bad")
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch(
+                "ragtag_crew.telegram.bot.get_tools_for_preset",
+                side_effect=KeyError("bad"),
+            ),
         ):
             await bot_module._cmd_tools(update, FakeContext(["bad"]))
 
@@ -171,23 +202,30 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         bot_module._sessions[100] = session
         update = FakeUpdate(chat_id=100)
 
-        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
-            "ragtag_crew.telegram.bot.get_tools_for_preset", return_value=new_tools
-        ), patch("ragtag_crew.telegram.bot.save_session") as save_session:
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch(
+                "ragtag_crew.telegram.bot.get_tools_for_preset", return_value=new_tools
+            ),
+            patch("ragtag_crew.telegram.bot.save_session") as save_session,
+        ):
             await bot_module._cmd_tools(update, FakeContext(["readonly"]))
 
         self.assertEqual(session.tools, new_tools)
         self.assertEqual(session.tool_preset, "readonly")
         save_session.assert_called_once_with(100, session)
-        self.assertIn("Tools switched to 'readonly'", update.message.reply_calls[0]["text"])
+        self.assertIn(
+            "Tools switched to 'readonly'", update.message.reply_calls[0]["text"]
+        )
 
     async def test_cmd_skills_without_local_skills_shows_empty_message(self) -> None:
         session = SimpleNamespace(enabled_skills=[])
         bot_module._sessions[100] = session
         update = FakeUpdate(chat_id=100)
 
-        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
-            "ragtag_crew.telegram.bot.list_skills", return_value=[]
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch("ragtag_crew.telegram.bot.list_skills", return_value=[]),
         ):
             await bot_module._cmd_skills(update, FakeContext())
 
@@ -199,9 +237,11 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         update = FakeUpdate(chat_id=100)
         skill = SimpleNamespace(name="review")
 
-        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
-            "ragtag_crew.telegram.bot.get_skill", return_value=skill
-        ), patch("ragtag_crew.telegram.bot.save_session") as save_session:
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch("ragtag_crew.telegram.bot.get_skill", return_value=skill),
+            patch("ragtag_crew.telegram.bot.save_session") as save_session,
+        ):
             await bot_module._cmd_skill(update, FakeContext(["use", "review"]))
 
         self.assertEqual(session.enabled_skills, ["review"])
@@ -212,25 +252,41 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         session = SimpleNamespace(enabled_skills=["review", "debug"])
         bot_module._sessions[100] = session
 
-        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
-            "ragtag_crew.telegram.bot.get_skill", return_value=SimpleNamespace(name="review")
-        ), patch("ragtag_crew.telegram.bot.save_session") as save_session:
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch(
+                "ragtag_crew.telegram.bot.get_skill",
+                return_value=SimpleNamespace(name="review"),
+            ),
+            patch("ragtag_crew.telegram.bot.save_session") as save_session,
+        ):
             drop_update = FakeUpdate(chat_id=100)
             await bot_module._cmd_skill(drop_update, FakeContext(["drop", "review"]))
             clear_update = FakeUpdate(chat_id=100)
             await bot_module._cmd_skill(clear_update, FakeContext(["clear"]))
 
-        self.assertEqual(drop_update.message.reply_calls[0]["text"], "Disabled skill: review")
-        self.assertEqual(clear_update.message.reply_calls[0]["text"], "Cleared all active skills.")
+        self.assertEqual(
+            drop_update.message.reply_calls[0]["text"], "Disabled skill: review"
+        )
+        self.assertEqual(
+            clear_update.message.reply_calls[0]["text"], "Cleared all active skills."
+        )
         self.assertEqual(session.enabled_skills, [])
         self.assertEqual(save_session.call_count, 2)
 
     async def test_cmd_memory_without_args_shows_index_and_files(self) -> None:
         update = FakeUpdate(chat_id=100)
 
-        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
-            "ragtag_crew.telegram.bot.read_memory_index", return_value="short index"
-        ), patch("ragtag_crew.telegram.bot.list_memory_files", return_value=["preferences.md"]):
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch(
+                "ragtag_crew.telegram.bot.read_memory_index", return_value="short index"
+            ),
+            patch(
+                "ragtag_crew.telegram.bot.list_memory_files",
+                return_value=["preferences.md"],
+            ),
+        ):
             await bot_module._cmd_memory(update, FakeContext())
 
         reply = update.message.reply_calls[0]["text"]
@@ -240,46 +296,132 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
     async def test_cmd_memory_add_appends_note(self) -> None:
         update = FakeUpdate(chat_id=100)
 
-        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
-            "ragtag_crew.telegram.bot.append_memory_note", return_value=SimpleNamespace(parent=SimpleNamespace(name="memory"), name="inbox.md")
-        ) as append_note:
-            await bot_module._cmd_memory(update, FakeContext(["add", "remember", "this"]))
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch(
+                "ragtag_crew.telegram.bot.append_memory_note",
+                return_value=SimpleNamespace(
+                    parent=SimpleNamespace(name="memory"), name="inbox.md"
+                ),
+            ) as append_note,
+        ):
+            await bot_module._cmd_memory(
+                update, FakeContext(["add", "remember", "this"])
+            )
 
         append_note.assert_called_once_with("remember this")
-        self.assertEqual(update.message.reply_calls[0]["text"], "Added memory note to memory/inbox.md")
+        self.assertEqual(
+            update.message.reply_calls[0]["text"],
+            "Added memory note to memory/inbox.md",
+        )
 
     async def test_cmd_memory_show_returns_content(self) -> None:
         update = FakeUpdate(chat_id=100)
 
-        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
-            "ragtag_crew.telegram.bot.read_memory_file", return_value="saved memory content"
-        ) as read_file:
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch(
+                "ragtag_crew.telegram.bot.read_memory_file",
+                return_value="saved memory content",
+            ) as read_file,
+        ):
             await bot_module._cmd_memory(update, FakeContext(["show", "preferences"]))
 
         read_file.assert_called_once_with("preferences")
         self.assertEqual(update.message.reply_calls[0]["text"], "saved memory content")
 
+    async def test_cmd_memory_search_returns_hits(self) -> None:
+        update = FakeUpdate(chat_id=100)
+        hits = [
+            SimpleNamespace(file_name="MEMORY.md", line=3, snippet="python packaging"),
+            SimpleNamespace(file_name="preferences.md", line=1, snippet="python style"),
+        ]
+
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch(
+                "ragtag_crew.telegram.bot.search_memory", return_value=hits
+            ) as search_memory,
+        ):
+            await bot_module._cmd_memory(update, FakeContext(["search", "python"]))
+
+        search_memory.assert_called_once_with("python")
+        reply = update.message.reply_calls[0]["text"]
+        self.assertIn("Memory search results for: python", reply)
+        self.assertIn("MEMORY.md:3", reply)
+        self.assertIn("preferences.md:1", reply)
+
+    async def test_cmd_memory_search_requires_query(self) -> None:
+        update = FakeUpdate(chat_id=100)
+
+        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True):
+            await bot_module._cmd_memory(update, FakeContext(["search"]))
+
+        self.assertEqual(
+            update.message.reply_calls[0]["text"], "Usage: /memory search <query>"
+        )
+
+    async def test_cmd_memory_search_reports_no_hits(self) -> None:
+        update = FakeUpdate(chat_id=100)
+
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch("ragtag_crew.telegram.bot.search_memory", return_value=[]),
+        ):
+            await bot_module._cmd_memory(update, FakeContext(["search", "missing"]))
+
+        self.assertEqual(
+            update.message.reply_calls[0]["text"],
+            "No memory results found for: missing",
+        )
+
     async def test_cmd_memory_promote_uses_default_target(self) -> None:
         update = FakeUpdate(chat_id=100)
 
-        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
-            "ragtag_crew.telegram.bot.promote_inbox", return_value=(SimpleNamespace(name="MEMORY.md", parent=SimpleNamespace(name="repo")), 2)
-        ) as promote:
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch(
+                "ragtag_crew.telegram.bot.promote_inbox",
+                return_value=(
+                    SimpleNamespace(
+                        name="MEMORY.md", parent=SimpleNamespace(name="repo")
+                    ),
+                    2,
+                ),
+            ) as promote,
+        ):
             await bot_module._cmd_memory(update, FakeContext(["promote"]))
 
         promote.assert_called_once_with("MEMORY.md")
-        self.assertEqual(update.message.reply_calls[0]["text"], "Promoted 2 inbox entries to MEMORY.md")
+        self.assertEqual(
+            update.message.reply_calls[0]["text"],
+            "Promoted 2 inbox entries to MEMORY.md",
+        )
 
     async def test_cmd_memory_promote_supports_named_target(self) -> None:
         update = FakeUpdate(chat_id=100)
 
-        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
-            "ragtag_crew.telegram.bot.promote_inbox", return_value=(SimpleNamespace(name="preferences.md", parent=SimpleNamespace(name="memory")), 1)
-        ) as promote:
-            await bot_module._cmd_memory(update, FakeContext(["promote", "preferences"]))
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch(
+                "ragtag_crew.telegram.bot.promote_inbox",
+                return_value=(
+                    SimpleNamespace(
+                        name="preferences.md", parent=SimpleNamespace(name="memory")
+                    ),
+                    1,
+                ),
+            ) as promote,
+        ):
+            await bot_module._cmd_memory(
+                update, FakeContext(["promote", "preferences"])
+            )
 
         promote.assert_called_once_with("preferences")
-        self.assertEqual(update.message.reply_calls[0]["text"], "Promoted 1 inbox entry to memory/preferences.md")
+        self.assertEqual(
+            update.message.reply_calls[0]["text"],
+            "Promoted 1 inbox entry to memory/preferences.md",
+        )
 
     async def test_cmd_context_without_args_shows_summary_status(self) -> None:
         session = SimpleNamespace(
@@ -309,9 +451,10 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         bot_module._sessions[100] = session
         update = FakeUpdate(chat_id=100)
 
-        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
-            "ragtag_crew.telegram.bot.save_session"
-        ) as save_session:
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch("ragtag_crew.telegram.bot.save_session") as save_session,
+        ):
             await bot_module._cmd_context(update, FakeContext(["compress"]))
 
         save_session.assert_called_once_with(100, session)
@@ -328,36 +471,45 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         bot_module._sessions[100] = session
         update = FakeUpdate(chat_id=100)
 
-        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
-            "ragtag_crew.telegram.bot.save_session"
-        ) as save_session:
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch("ragtag_crew.telegram.bot.save_session") as save_session,
+        ):
             await bot_module._cmd_context(update, FakeContext(["compress"]))
 
         save_session.assert_called_once_with(100, session)
-        self.assertIn("No compaction needed yet.", update.message.reply_calls[0]["text"])
+        self.assertIn(
+            "No compaction needed yet.", update.message.reply_calls[0]["text"]
+        )
 
     async def test_cmd_context_compress_rejects_busy_session(self) -> None:
         session = SimpleNamespace(is_busy=True)
         bot_module._sessions[100] = session
         update = FakeUpdate(chat_id=100)
 
-        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
-            "ragtag_crew.telegram.bot.save_session"
-        ) as save_session:
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch("ragtag_crew.telegram.bot.save_session") as save_session,
+        ):
             await bot_module._cmd_context(update, FakeContext(["compress"]))
 
         save_session.assert_not_called()
-        self.assertEqual(update.message.reply_calls[0]["text"], "Please wait — agent is busy.")
+        self.assertEqual(
+            update.message.reply_calls[0]["text"], "Please wait — agent is busy."
+        )
 
     async def test_cmd_mcp_without_config_shows_hint(self) -> None:
         update = FakeUpdate(chat_id=100)
 
-        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
-            "ragtag_crew.telegram.bot.get_mcp_statuses", return_value=[]
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch("ragtag_crew.telegram.bot.get_mcp_statuses", return_value=[]),
         ):
             await bot_module._cmd_mcp(update, FakeContext())
 
-        self.assertIn("No MCP servers configured.", update.message.reply_calls[0]["text"])
+        self.assertIn(
+            "No MCP servers configured.", update.message.reply_calls[0]["text"]
+        )
 
     async def test_cmd_mcp_lists_server_statuses(self) -> None:
         update = FakeUpdate(chat_id=100)
@@ -370,8 +522,9 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
             )
         ]
 
-        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
-            "ragtag_crew.telegram.bot.get_mcp_statuses", return_value=statuses
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch("ragtag_crew.telegram.bot.get_mcp_statuses", return_value=statuses),
         ):
             await bot_module._cmd_mcp(update, FakeContext())
 
@@ -390,17 +543,23 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
             )
         ]
 
-        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
-            "ragtag_crew.telegram.bot.initialize_external_capabilities",
-            new=AsyncMock(return_value=statuses),
-        ) as reload_caps, patch(
-            "ragtag_crew.telegram.bot.get_mcp_statuses",
-            return_value=statuses,
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch(
+                "ragtag_crew.telegram.bot.initialize_external_capabilities",
+                new=AsyncMock(return_value=statuses),
+            ) as reload_caps,
+            patch(
+                "ragtag_crew.telegram.bot.get_mcp_statuses",
+                return_value=statuses,
+            ),
         ):
             await bot_module._cmd_mcp(update, FakeContext(["reload"]))
 
         reload_caps.assert_awaited_once_with(force=True)
-        self.assertIn("MCP capabilities reloaded.", update.message.reply_calls[0]["text"])
+        self.assertIn(
+            "MCP capabilities reloaded.", update.message.reply_calls[0]["text"]
+        )
 
     async def test_cmd_ext_show_lists_all_capabilities(self) -> None:
         update = FakeUpdate(chat_id=100)
@@ -421,9 +580,12 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
             ),
         ]
 
-        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
-            "ragtag_crew.telegram.bot.get_capability_statuses",
-            return_value=statuses,
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch(
+                "ragtag_crew.telegram.bot.get_capability_statuses",
+                return_value=statuses,
+            ),
         ):
             await bot_module._cmd_ext(update, FakeContext())
 
@@ -445,25 +607,45 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
             )
         ]
 
-        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
-            "ragtag_crew.telegram.bot.initialize_external_capabilities",
-            new=AsyncMock(return_value=statuses),
-        ) as reload_caps, patch(
-            "ragtag_crew.telegram.bot.get_capability_statuses",
-            return_value=statuses,
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch(
+                "ragtag_crew.telegram.bot.initialize_external_capabilities",
+                new=AsyncMock(return_value=statuses),
+            ) as reload_caps,
+            patch(
+                "ragtag_crew.telegram.bot.get_capability_statuses",
+                return_value=statuses,
+            ),
         ):
             await bot_module._cmd_ext(update, FakeContext(["reload"]))
 
         reload_caps.assert_awaited_once_with(force=True)
-        self.assertIn("External capabilities reloaded.", update.message.reply_calls[0]["text"])
+        self.assertIn(
+            "External capabilities reloaded.", update.message.reply_calls[0]["text"]
+        )
 
     async def test_cmd_browser_status_shows_mode_and_connection(self) -> None:
-        session = SimpleNamespace(browser_mode="isolated", browser_attached_confirmed=False)
+        session = SimpleNamespace(
+            browser_mode="isolated", browser_attached_confirmed=False
+        )
         bot_module._sessions[100] = session
         update = FakeUpdate(chat_id=100)
         browser_statuses = [
-            SimpleNamespace(key="browser-isolated", kind="browser", ready=True, detail="profile=data/browser/isolated", tool_names=("browser_open",)),
-            SimpleNamespace(key="browser-attached", kind="browser", ready=True, detail="detached (auto-connect)", tool_names=("browser_open",)),
+            SimpleNamespace(
+                key="browser-isolated",
+                kind="browser",
+                ready=True,
+                detail="profile=data/browser/isolated",
+                tool_names=("browser_open",),
+            ),
+            SimpleNamespace(
+                key="browser-attached",
+                kind="browser",
+                ready=True,
+                detail="detached (auto-connect)",
+                tool_names=("browser_open",),
+            ),
         ]
         runtime = SimpleNamespace(
             session_mode="isolated",
@@ -474,9 +656,17 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
             attached_connected=False,
         )
 
-        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
-            "ragtag_crew.telegram.bot.get_browser_statuses", return_value=browser_statuses
-        ), patch("ragtag_crew.telegram.bot.get_browser_runtime_state", return_value=runtime):
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch(
+                "ragtag_crew.telegram.bot.get_browser_statuses",
+                return_value=browser_statuses,
+            ),
+            patch(
+                "ragtag_crew.telegram.bot.get_browser_runtime_state",
+                return_value=runtime,
+            ),
+        ):
             await bot_module._cmd_browser(update, FakeContext())
 
         reply = update.message.reply_calls[0]["text"]
@@ -488,12 +678,26 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Connect hint:", reply)
 
     async def test_cmd_browser_mode_updates_session(self) -> None:
-        session = SimpleNamespace(browser_mode="isolated", browser_attached_confirmed=True)
+        session = SimpleNamespace(
+            browser_mode="isolated", browser_attached_confirmed=True
+        )
         bot_module._sessions[100] = session
         update = FakeUpdate(chat_id=100)
         browser_statuses = [
-            SimpleNamespace(key="browser-isolated", kind="browser", ready=True, detail="profile=x", tool_names=()),
-            SimpleNamespace(key="browser-attached", kind="browser", ready=True, detail="detached (auto-connect)", tool_names=()),
+            SimpleNamespace(
+                key="browser-isolated",
+                kind="browser",
+                ready=True,
+                detail="profile=x",
+                tool_names=(),
+            ),
+            SimpleNamespace(
+                key="browser-attached",
+                kind="browser",
+                ready=True,
+                detail="detached (auto-connect)",
+                tool_names=(),
+            ),
         ]
         runtime = SimpleNamespace(
             session_mode="attached",
@@ -504,34 +708,54 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
             attached_connected=False,
         )
 
-        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
-            "ragtag_crew.telegram.bot.get_browser_statuses", return_value=browser_statuses
-        ), patch("ragtag_crew.telegram.bot.get_browser_runtime_state", return_value=runtime), patch(
-            "ragtag_crew.telegram.bot.save_session"
-        ) as save_session, patch.object(bot_module.settings, "browser_attached_enabled", True):
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch(
+                "ragtag_crew.telegram.bot.get_browser_statuses",
+                return_value=browser_statuses,
+            ),
+            patch(
+                "ragtag_crew.telegram.bot.get_browser_runtime_state",
+                return_value=runtime,
+            ),
+            patch("ragtag_crew.telegram.bot.save_session") as save_session,
+            patch.object(bot_module.settings, "browser_attached_enabled", True),
+        ):
             await bot_module._cmd_browser(update, FakeContext(["mode", "attached"]))
 
         self.assertEqual(session.browser_mode, "attached")
         save_session.assert_called_once_with(100, session)
-        self.assertIn("Browser mode switched to: attached", update.message.reply_calls[0]["text"])
+        self.assertIn(
+            "Browser mode switched to: attached", update.message.reply_calls[0]["text"]
+        )
 
     async def test_cmd_browser_mode_attached_requires_confirmation(self) -> None:
-        session = SimpleNamespace(browser_mode="isolated", browser_attached_confirmed=False)
+        session = SimpleNamespace(
+            browser_mode="isolated", browser_attached_confirmed=False
+        )
         bot_module._sessions[100] = session
         update = FakeUpdate(chat_id=100)
 
-        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch.object(
-            bot_module.settings, "browser_attached_enabled", True
-        ), patch.object(bot_module.settings, "browser_attached_require_confirmation", True), patch(
-            "ragtag_crew.telegram.bot.save_session"
-        ) as save_session:
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch.object(bot_module.settings, "browser_attached_enabled", True),
+            patch.object(
+                bot_module.settings, "browser_attached_require_confirmation", True
+            ),
+            patch("ragtag_crew.telegram.bot.save_session") as save_session,
+        ):
             await bot_module._cmd_browser(update, FakeContext(["mode", "attached"]))
 
         save_session.assert_not_called()
-        self.assertIn("requires explicit confirmation first", update.message.reply_calls[0]["text"])
+        self.assertIn(
+            "requires explicit confirmation first",
+            update.message.reply_calls[0]["text"],
+        )
 
     async def test_cmd_browser_confirm_attached_updates_session(self) -> None:
-        session = SimpleNamespace(browser_mode="isolated", browser_attached_confirmed=False)
+        session = SimpleNamespace(
+            browser_mode="isolated", browser_attached_confirmed=False
+        )
         bot_module._sessions[100] = session
         update = FakeUpdate(chat_id=100)
         browser_statuses = []
@@ -544,24 +768,47 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
             attached_connected=False,
         )
 
-        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
-            "ragtag_crew.telegram.bot.get_browser_statuses", return_value=browser_statuses
-        ), patch("ragtag_crew.telegram.bot.get_browser_runtime_state", return_value=runtime), patch(
-            "ragtag_crew.telegram.bot.save_session"
-        ) as save_session:
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch(
+                "ragtag_crew.telegram.bot.get_browser_statuses",
+                return_value=browser_statuses,
+            ),
+            patch(
+                "ragtag_crew.telegram.bot.get_browser_runtime_state",
+                return_value=runtime,
+            ),
+            patch("ragtag_crew.telegram.bot.save_session") as save_session,
+        ):
             await bot_module._cmd_browser(update, FakeContext(["confirm-attached"]))
 
         self.assertTrue(session.browser_attached_confirmed)
         save_session.assert_called_once_with(100, session)
-        self.assertIn("Attached browser confirmed", update.message.reply_calls[0]["text"])
+        self.assertIn(
+            "Attached browser confirmed", update.message.reply_calls[0]["text"]
+        )
 
     async def test_cmd_browser_status_shows_manual_cdp_path(self) -> None:
-        session = SimpleNamespace(browser_mode="attached", browser_attached_confirmed=True)
+        session = SimpleNamespace(
+            browser_mode="attached", browser_attached_confirmed=True
+        )
         bot_module._sessions[100] = session
         update = FakeUpdate(chat_id=100)
         browser_statuses = [
-            SimpleNamespace(key="browser-isolated", kind="browser", ready=True, detail="profile=data/browser/isolated", tool_names=("browser_open",)),
-            SimpleNamespace(key="browser-attached", kind="browser", ready=True, detail="detached (http://127.0.0.1:9222)", tool_names=("browser_open",)),
+            SimpleNamespace(
+                key="browser-isolated",
+                kind="browser",
+                ready=True,
+                detail="profile=data/browser/isolated",
+                tool_names=("browser_open",),
+            ),
+            SimpleNamespace(
+                key="browser-attached",
+                kind="browser",
+                ready=True,
+                detail="detached (http://127.0.0.1:9222)",
+                tool_names=("browser_open",),
+            ),
         ]
         runtime = SimpleNamespace(
             session_mode="attached",
@@ -572,9 +819,17 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
             attached_connected=False,
         )
 
-        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
-            "ragtag_crew.telegram.bot.get_browser_statuses", return_value=browser_statuses
-        ), patch("ragtag_crew.telegram.bot.get_browser_runtime_state", return_value=runtime):
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch(
+                "ragtag_crew.telegram.bot.get_browser_statuses",
+                return_value=browser_statuses,
+            ),
+            patch(
+                "ragtag_crew.telegram.bot.get_browser_runtime_state",
+                return_value=runtime,
+            ),
+        ):
             await bot_module._cmd_browser(update, FakeContext())
 
         reply = update.message.reply_calls[0]["text"]
@@ -583,12 +838,26 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("attach via the configured CDP URL", reply)
 
     async def test_cmd_browser_connect_reloads_external_state(self) -> None:
-        session = SimpleNamespace(browser_mode="attached", browser_attached_confirmed=True)
+        session = SimpleNamespace(
+            browser_mode="attached", browser_attached_confirmed=True
+        )
         bot_module._sessions[100] = session
         update = FakeUpdate(chat_id=100)
         browser_statuses = [
-            SimpleNamespace(key="browser-isolated", kind="browser", ready=True, detail="profile=x", tool_names=()),
-            SimpleNamespace(key="browser-attached", kind="browser", ready=True, detail="connected via auto-connect", tool_names=()),
+            SimpleNamespace(
+                key="browser-isolated",
+                kind="browser",
+                ready=True,
+                detail="profile=x",
+                tool_names=(),
+            ),
+            SimpleNamespace(
+                key="browser-attached",
+                kind="browser",
+                ready=True,
+                detail="connected via auto-connect",
+                tool_names=(),
+            ),
         ]
         runtime = SimpleNamespace(
             session_mode="attached",
@@ -599,28 +868,56 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
             attached_connected=True,
         )
 
-        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
-            "ragtag_crew.telegram.bot.connect_attached_browser",
-            new=AsyncMock(return_value=(True, "Connected attached browser via auto-connect.")),
-        ) as connect_browser, patch(
-            "ragtag_crew.telegram.bot.initialize_external_capabilities",
-            new=AsyncMock(return_value=[]),
-        ) as init_caps, patch(
-            "ragtag_crew.telegram.bot.get_browser_statuses", return_value=browser_statuses
-        ), patch("ragtag_crew.telegram.bot.get_browser_runtime_state", return_value=runtime):
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch(
+                "ragtag_crew.telegram.bot.connect_attached_browser",
+                new=AsyncMock(
+                    return_value=(True, "Connected attached browser via auto-connect.")
+                ),
+            ) as connect_browser,
+            patch(
+                "ragtag_crew.telegram.bot.initialize_external_capabilities",
+                new=AsyncMock(return_value=[]),
+            ) as init_caps,
+            patch(
+                "ragtag_crew.telegram.bot.get_browser_statuses",
+                return_value=browser_statuses,
+            ),
+            patch(
+                "ragtag_crew.telegram.bot.get_browser_runtime_state",
+                return_value=runtime,
+            ),
+        ):
             await bot_module._cmd_browser(update, FakeContext(["connect"]))
 
         connect_browser.assert_awaited_once()
         init_caps.assert_awaited_once_with(force=True)
-        self.assertIn("Attached browser connected.", update.message.reply_calls[0]["text"])
+        self.assertIn(
+            "Attached browser connected.", update.message.reply_calls[0]["text"]
+        )
 
     async def test_cmd_browser_disconnect_reloads_external_state(self) -> None:
-        session = SimpleNamespace(browser_mode="attached", browser_attached_confirmed=True)
+        session = SimpleNamespace(
+            browser_mode="attached", browser_attached_confirmed=True
+        )
         bot_module._sessions[100] = session
         update = FakeUpdate(chat_id=100)
         browser_statuses = [
-            SimpleNamespace(key="browser-isolated", kind="browser", ready=True, detail="profile=x", tool_names=()),
-            SimpleNamespace(key="browser-attached", kind="browser", ready=True, detail="detached (auto-connect)", tool_names=()),
+            SimpleNamespace(
+                key="browser-isolated",
+                kind="browser",
+                ready=True,
+                detail="profile=x",
+                tool_names=(),
+            ),
+            SimpleNamespace(
+                key="browser-attached",
+                kind="browser",
+                ready=True,
+                detail="detached (auto-connect)",
+                tool_names=(),
+            ),
         ]
         runtime = SimpleNamespace(
             session_mode="attached",
@@ -631,19 +928,32 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
             attached_connected=False,
         )
 
-        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
-            "ragtag_crew.telegram.bot.disconnect_attached_browser", return_value="Detached from current browser."
-        ) as disconnect_browser, patch(
-            "ragtag_crew.telegram.bot.initialize_external_capabilities",
-            new=AsyncMock(return_value=[]),
-        ) as init_caps, patch(
-            "ragtag_crew.telegram.bot.get_browser_statuses", return_value=browser_statuses
-        ), patch("ragtag_crew.telegram.bot.get_browser_runtime_state", return_value=runtime):
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch(
+                "ragtag_crew.telegram.bot.disconnect_attached_browser",
+                return_value="Detached from current browser.",
+            ) as disconnect_browser,
+            patch(
+                "ragtag_crew.telegram.bot.initialize_external_capabilities",
+                new=AsyncMock(return_value=[]),
+            ) as init_caps,
+            patch(
+                "ragtag_crew.telegram.bot.get_browser_statuses",
+                return_value=browser_statuses,
+            ),
+            patch(
+                "ragtag_crew.telegram.bot.get_browser_runtime_state",
+                return_value=runtime,
+            ),
+        ):
             await bot_module._cmd_browser(update, FakeContext(["disconnect"]))
 
         disconnect_browser.assert_called_once()
         init_caps.assert_awaited_once_with(force=True)
-        self.assertIn("Detached from current browser.", update.message.reply_calls[0]["text"])
+        self.assertIn(
+            "Detached from current browser.", update.message.reply_calls[0]["text"]
+        )
 
     async def test_handle_message_busy_session_is_rejected(self) -> None:
         session = SimpleNamespace(is_busy=True)
@@ -653,7 +963,10 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True):
             await bot_module._handle_message(update, FakeContext())
 
-        self.assertEqual(update.message.reply_calls[0]["text"], "Please wait for the current response to finish.")
+        self.assertEqual(
+            update.message.reply_calls[0]["text"],
+            "Please wait for the current response to finish.",
+        )
 
     async def test_handle_message_busy_progress_query_returns_snapshot(self) -> None:
         session = SimpleNamespace(
@@ -666,7 +979,9 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True):
             await bot_module._handle_message(update, FakeContext())
 
-        self.assertEqual(update.message.reply_calls[0]["text"], "任务仍在执行。\n正在执行: write")
+        self.assertEqual(
+            update.message.reply_calls[0]["text"], "任务仍在执行。\n正在执行: write"
+        )
 
     async def test_handle_message_runs_prompt_and_finalizes_streamer(self) -> None:
         placeholder = FakeSentMessage()
@@ -684,10 +999,11 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         bot_module._sessions[100] = session
         streamer = SimpleNamespace(on_event=object(), finalize=AsyncMock())
 
-        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
-            "ragtag_crew.telegram.bot.TelegramStreamer", return_value=streamer
-        ), patch("ragtag_crew.telegram.bot.save_session") as save_session, patch(
-            "ragtag_crew.telegram.bot.log"
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch("ragtag_crew.telegram.bot.TelegramStreamer", return_value=streamer),
+            patch("ragtag_crew.telegram.bot.save_session") as save_session,
+            patch("ragtag_crew.telegram.bot.log"),
         ):
             await bot_module._handle_message(update, FakeContext())
 
@@ -696,7 +1012,9 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         save_session.assert_called_once_with(100, session)
         self.assertEqual(update.message.reply_calls[0]["text"], "Thinking...")
 
-    async def test_handle_message_error_updates_placeholder_and_still_persists(self) -> None:
+    async def test_handle_message_error_updates_placeholder_and_still_persists(
+        self,
+    ) -> None:
         placeholder = FakeSentMessage()
         update = FakeUpdate(chat_id=100, text="hello", placeholder=placeholder)
         session = SimpleNamespace(
@@ -712,9 +1030,11 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         bot_module._sessions[100] = session
         streamer = SimpleNamespace(on_event=object(), finalize=AsyncMock())
 
-        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True), patch(
-            "ragtag_crew.telegram.bot.TelegramStreamer", return_value=streamer
-        ), patch("ragtag_crew.telegram.bot.save_session") as save_session:
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch("ragtag_crew.telegram.bot.TelegramStreamer", return_value=streamer),
+            patch("ragtag_crew.telegram.bot.save_session") as save_session,
+        ):
             await bot_module._handle_message(update, FakeContext())
 
         self.assertEqual(placeholder.edit_calls[0]["text"], "Error: broken")
@@ -745,10 +1065,12 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
 
         fake_application = SimpleNamespace(builder=lambda: FakeBuilder())
 
-        with patch("ragtag_crew.telegram.bot.cleanup_expired_sessions") as cleanup, patch(
-            "ragtag_crew.telegram.bot.ensure_external_capabilities_initialized"
-        ) as init_external, patch(
-            "ragtag_crew.telegram.bot.Application", fake_application
+        with (
+            patch("ragtag_crew.telegram.bot.cleanup_expired_sessions") as cleanup,
+            patch(
+                "ragtag_crew.telegram.bot.ensure_external_capabilities_initialized"
+            ) as init_external,
+            patch("ragtag_crew.telegram.bot.Application", fake_application),
         ):
             app = bot_module.build_app()
 
@@ -772,8 +1094,19 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
 
     def test_bot_commands_match_handlers(self) -> None:
         handler_commands = [
-            "start", "new", "cancel", "plan", "model", "tools", "skills",
-            "skill", "memory", "context", "mcp", "ext", "browser",
+            "start",
+            "new",
+            "cancel",
+            "plan",
+            "model",
+            "tools",
+            "skills",
+            "skill",
+            "memory",
+            "context",
+            "mcp",
+            "ext",
+            "browser",
         ]
         for cmd in handler_commands:
             if cmd == "start":

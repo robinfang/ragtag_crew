@@ -6,7 +6,7 @@ from pathlib import Path
 
 from ragtag_crew.config import settings
 from ragtag_crew.env_bootstrap import load_workspace_snapshot
-from ragtag_crew.skill_loader import render_skill_prompt
+from ragtag_crew.skill_loader import render_skill_catalog_prompt
 
 
 def _read_optional_markdown(path: Path) -> str:
@@ -76,7 +76,7 @@ def build_system_prompt(
     _append_section(parts, "Long-term Memory Index", load_memory_index())
 
     if enabled_skills:
-        skill_prompt = render_skill_prompt(enabled_skills)
+        skill_prompt = render_skill_catalog_prompt(enabled_skills)
         _append_section(parts, "Active Skills", skill_prompt)
 
     _append_section(
