@@ -62,6 +62,7 @@ class AgentSession:
         tool_preset: str = "coding",
         enabled_skills: list[str] | None = None,
         session_prompt: str = "",
+        protected_content: str = "",
         session_summary: str = "",
         summary_updated_at: float | None = None,
         recent_message_count: int = 0,
@@ -75,6 +76,7 @@ class AgentSession:
         self.tool_preset = tool_preset
         self.enabled_skills = list(enabled_skills or [])
         self.session_prompt = session_prompt
+        self.protected_content = protected_content
         self.session_summary = session_summary
         self.summary_updated_at = summary_updated_at
         self.recent_message_count = recent_message_count
@@ -157,6 +159,7 @@ class AgentSession:
         """Clear conversation history (start a new session)."""
         self.messages.clear()
         self.session_prompt = ""
+        self.protected_content = ""
         self.session_summary = ""
         self.summary_updated_at = None
         self.recent_message_count = 0
@@ -312,6 +315,7 @@ class AgentSession:
         system_prompt = build_system_prompt(
             base_system_prompt=self.system_prompt,
             enabled_skills=self.enabled_skills,
+            protected_content=self.protected_content,
             session_prompt=self.session_prompt,
             session_summary=self.session_summary,
             planning_enabled=self.planning_enabled,

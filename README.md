@@ -27,6 +27,7 @@
 - 已支持 LLM 超时、整轮超时和 JSON 会话持久化
 - 已支持本地 Markdown skill 的会话级启用，并改为“名称 + 摘要 + 路径”的轻量注入；完整内容按需读取
 - 已接入 `PROJECT.md` / `USER.local.md` / `MEMORY.md` 分层上下文
+- 已支持 `/prompt` 会话级临时规则，以及独立的 Protected Content 注入层，用于放置不应被普通会话压缩影响的规则
 - 已新增 `Workspace Snapshot` 环境引导：自动注入受控目录树和关键配置文件摘要，降低冷启动探索成本
 - 已提供最小 `/memory` 闭环：追加到 `memory/inbox.md`、查看文件、搜索历史记忆、手动 promote 到长期层
 - 已支持 `session_summary` 会话压缩：只保留最近消息窗口，其余折叠为摘要，并保留关键工具参数、调用顺序和更高保真度的摘要文本
@@ -61,6 +62,7 @@ uv run python -m ragtag_crew.main
 - 用 `/memory search <query>` 在 `MEMORY.md` 和 `memory/*.md` 中按需检索历史记忆
 - 用 `/memory promote [target]` 把 `inbox.md` 中待整理条目并入 `MEMORY.md` 或指定记忆文件
 - 用 `/context` 查看当前会话摘要状态，必要时用 `/context compress` 手动收口
+- 用 `/prompt set <text>` 设置当前会话临时规则，用 `/prompt protect <text>` 写入受保护内容
 - 会话忙碌时直接问“进度”“进展”“好了没”等，机器人会返回实时快照
 - 用 `/cancel` 中止当前任务，机器人会立即确认已发送取消信号
 - 复制 `mcp_servers.example.json` 为 `mcp_servers.local.json` 后，可通过 `/mcp` 查看 MCP server 状态

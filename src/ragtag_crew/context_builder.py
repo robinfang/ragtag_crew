@@ -41,6 +41,7 @@ def build_system_prompt(
     *,
     base_system_prompt: str,
     enabled_skills: list[str] | None = None,
+    protected_content: str = "",
     session_prompt: str = "",
     session_summary: str = "",
     planning_enabled: bool = True,
@@ -89,6 +90,7 @@ def build_system_prompt(
         ),
     )
 
+    _append_section(parts, "Protected Content", protected_content)
     _append_section(parts, "Session Prompt", session_prompt)
     _append_section(parts, "Session Summary", session_summary)
     return "\n\n".join(parts).strip()

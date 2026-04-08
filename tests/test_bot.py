@@ -423,6 +423,73 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
             "Promoted 1 inbox entry to memory/preferences.md",
         )
 
+    async def test_cmd_prompt_show_returns_session_prompt_and_protected_content(
+        self,
+    ) -> None:
+        session = SimpleNamespace(
+            session_prompt="answer briefly",
+            protected_content="never remove this rule",
+        )
+        bot_module._sessions[100] = session
+        update = FakeUpdate(chat_id=100)
+
+        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True):
+            await bot_module._cmd_prompt(update, FakeContext())
+
+        reply = update.message.reply_calls[0]["text"]
+        self.assertIn("answer briefly", reply)
+        self.assertIn("never remove this rule", reply)
+
+    async def test_cmd_prompt_set_and_protect_persist_session(self) -> None:
+        session = SimpleNamespace(session_prompt="", protected_content="")
+        bot_module._sessions[100] = session
+
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch("ragtag_crew.telegram.bot.save_session") as save_session,
+        ):
+            set_update = FakeUpdate(chat_id=100)
+            await bot_module._cmd_prompt(
+                set_update, FakeContext(["set", "be", "concise"])
+            )
+            protect_update = FakeUpdate(chat_id=100)
+            await bot_module._cmd_prompt(
+                protect_update, FakeContext(["protect", "keep", "this"])
+            )
+
+        self.assertEqual(session.session_prompt, "be concise")
+        self.assertEqual(session.protected_content, "keep this")
+        self.assertEqual(
+            set_update.message.reply_calls[0]["text"], "Session prompt updated."
+        )
+        self.assertEqual(
+            protect_update.message.reply_calls[0]["text"], "Protected content updated."
+        )
+        self.assertEqual(save_session.call_count, 2)
+
+    async def test_cmd_prompt_clear_and_unprotect(self) -> None:
+        session = SimpleNamespace(session_prompt="x", protected_content="y")
+        bot_module._sessions[100] = session
+
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch("ragtag_crew.telegram.bot.save_session"),
+        ):
+            clear_update = FakeUpdate(chat_id=100)
+            await bot_module._cmd_prompt(clear_update, FakeContext(["clear"]))
+            unprotect_update = FakeUpdate(chat_id=100)
+            await bot_module._cmd_prompt(unprotect_update, FakeContext(["unprotect"]))
+
+        self.assertEqual(session.session_prompt, "")
+        self.assertEqual(session.protected_content, "")
+        self.assertEqual(
+            clear_update.message.reply_calls[0]["text"], "Session prompt cleared."
+        )
+        self.assertEqual(
+            unprotect_update.message.reply_calls[0]["text"],
+            "Protected content cleared.",
+        )
+
     async def test_cmd_context_without_args_shows_summary_status(self) -> None:
         session = SimpleNamespace(
             messages=[{"role": "user", "content": "hi"}],
@@ -1076,7 +1143,7 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
 
         cleanup.assert_called_once()
         init_external.assert_called_once()
-        self.assertEqual(len(added_handlers), 14)
+        self.assertEqual(len(added_handlers), 15)
         self.assertIsNotNone(app)
         self.assertIsNotNone(app.post_init)
 
@@ -1103,6 +1170,7 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
             "skills",
             "skill",
             "memory",
+            "prompt",
             "context",
             "mcp",
             "ext",

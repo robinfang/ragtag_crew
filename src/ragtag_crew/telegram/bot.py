@@ -132,6 +132,7 @@ _BOT_COMMANDS = [
     BotCommand("skills", "列出可用技能"),
     BotCommand("skill", "启用 / 禁用技能"),
     BotCommand("memory", "记忆管理"),
+    BotCommand("prompt", "会话提示与保护内容"),
     BotCommand("context", "查看 / 压缩上下文"),
     BotCommand("mcp", "MCP 服务器状态"),
     BotCommand("ext", "外部能力状态"),
@@ -537,6 +538,65 @@ async def _cmd_memory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     )
 
 
+async def _cmd_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_authorized(update.effective_user.id):
+        log.warning("Unauthorized /prompt from user_id=%s", update.effective_user.id)
+        return
+
+    chat_id = update.effective_chat.id
+    session = _get_session(chat_id)
+    args = context.args or []
+
+    if not args or args[0].lower() == "show":
+        session_prompt = session.session_prompt or "(empty)"
+        protected = session.protected_content or "(empty)"
+        await update.message.reply_text(
+            "Session prompt:\n"
+            f"{_truncate_reply(session_prompt)}\n\n"
+            "Protected content:\n"
+            f"{_truncate_reply(protected)}\n\n"
+            "Usage: /prompt show | /prompt set <text> | /prompt clear | /prompt protect <text> | /prompt unprotect"
+        )
+        return
+
+    action = args[0].lower()
+    if action == "set":
+        text = " ".join(args[1:]).strip()
+        if not text:
+            await update.message.reply_text("Usage: /prompt set <text>")
+            return
+        session.session_prompt = text
+        save_session(chat_id, session)
+        await update.message.reply_text("Session prompt updated.")
+        return
+
+    if action == "clear":
+        session.session_prompt = ""
+        save_session(chat_id, session)
+        await update.message.reply_text("Session prompt cleared.")
+        return
+
+    if action == "protect":
+        text = " ".join(args[1:]).strip()
+        if not text:
+            await update.message.reply_text("Usage: /prompt protect <text>")
+            return
+        session.protected_content = text
+        save_session(chat_id, session)
+        await update.message.reply_text("Protected content updated.")
+        return
+
+    if action == "unprotect":
+        session.protected_content = ""
+        save_session(chat_id, session)
+        await update.message.reply_text("Protected content cleared.")
+        return
+
+    await update.message.reply_text(
+        "Usage: /prompt show | /prompt set <text> | /prompt clear | /prompt protect <text> | /prompt unprotect"
+    )
+
+
 async def _cmd_context(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_authorized(update.effective_user.id):
         log.warning("Unauthorized /context from user_id=%s", update.effective_user.id)
@@ -904,6 +964,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("skills", _cmd_skills))
     app.add_handler(CommandHandler("skill", _cmd_skill))
     app.add_handler(CommandHandler("memory", _cmd_memory))
+    app.add_handler(CommandHandler("prompt", _cmd_prompt))
     app.add_handler(CommandHandler("context", _cmd_context))
     app.add_handler(CommandHandler("mcp", _cmd_mcp))
     app.add_handler(CommandHandler("ext", _cmd_ext))

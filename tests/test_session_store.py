@@ -9,7 +9,11 @@ from unittest.mock import patch
 
 from ragtag_crew.agent import AgentSession
 from ragtag_crew.config import settings
-from ragtag_crew.telegram.session_store import cleanup_expired_sessions, load_session, save_session
+from ragtag_crew.telegram.session_store import (
+    cleanup_expired_sessions,
+    load_session,
+    save_session,
+)
 from ragtag_crew.tools import Tool
 
 import ragtag_crew.tools.file_tools  # noqa: F401
@@ -46,6 +50,7 @@ class SessionStoreTests(unittest.TestCase):
                     tool_preset="readonly",
                     enabled_skills=["review"],
                     session_prompt="prefer concise answers",
+                    protected_content="always preserve this rule",
                     session_summary="Discussed repository layout.",
                     summary_updated_at=1234.5,
                     recent_message_count=6,
@@ -62,6 +67,7 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual(restored.tool_preset, "readonly")
         self.assertEqual(restored.enabled_skills, ["review"])
         self.assertEqual(restored.session_prompt, "prefer concise answers")
+        self.assertEqual(restored.protected_content, "always preserve this rule")
         self.assertEqual(restored.session_summary, "Discussed repository layout.")
         self.assertEqual(restored.summary_updated_at, 1234.5)
         self.assertEqual(restored.recent_message_count, 6)
@@ -94,7 +100,9 @@ class SessionStoreTests(unittest.TestCase):
                     json.dumps({"last_active_at": 1}),
                     encoding="utf-8",
                 )
-                with patch("ragtag_crew.telegram.session_store.time.time", return_value=10_000):
+                with patch(
+                    "ragtag_crew.telegram.session_store.time.time", return_value=10_000
+                ):
                     cleanup_expired_sessions()
 
                 self.assertFalse(path.exists())

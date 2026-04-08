@@ -45,6 +45,7 @@ class ContextBuilderTests(unittest.TestCase):
                 prompt = build_system_prompt(
                     base_system_prompt="base system",
                     enabled_skills=["review"],
+                    protected_content="never drop this",
                     session_prompt="answer concisely",
                     session_summary="worked on context layering",
                 )
@@ -71,11 +72,16 @@ class ContextBuilderTests(unittest.TestCase):
             prompt.index("## Active Skills"), prompt.index("## External Result Policy")
         )
         self.assertLess(
-            prompt.index("## External Result Policy"), prompt.index("## Session Prompt")
+            prompt.index("## External Result Policy"),
+            prompt.index("## Protected Content"),
+        )
+        self.assertLess(
+            prompt.index("## Protected Content"), prompt.index("## Session Prompt")
         )
         self.assertLess(
             prompt.index("## Session Prompt"), prompt.index("## Session Summary")
         )
+        self.assertIn("never drop this", prompt)
 
     def test_build_system_prompt_skips_missing_optional_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
