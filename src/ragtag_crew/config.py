@@ -48,6 +48,9 @@ class Settings(BaseSettings):
         "{commands}\n\n"
         "如果验证失败，请分析错误并修复。如果验证通过，确认修改完成。"
     )
+    auto_memory_external_results_enabled: bool = False
+    auto_memory_external_source_types: str = "search,openapi"
+    auto_memory_external_max_excerpt_chars: int = 200
     external_tool_timeout: int = 30
     mcp_servers_file: str = "mcp_servers.local.json"
     openapi_tools_file: str = "openapi_tools.local.json"

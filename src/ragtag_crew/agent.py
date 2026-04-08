@@ -22,7 +22,13 @@ from ragtag_crew.errors import (
 )
 from ragtag_crew.external.browser_agent import browser_execution_context
 from ragtag_crew.llm import stream_chat, LLMResponse, ToolCall
-from ragtag_crew.session_summary import clear_stale_tool_results, compact_history
+from ragtag_crew.memory_store import append_memory_note_if_missing
+from ragtag_crew.session_summary import (
+    _clip_text,
+    _extract_external_refs,
+    clear_stale_tool_results,
+    compact_history,
+)
 from ragtag_crew.tools import Tool, build_tool_schemas, get_tool
 
 log = logging.getLogger(__name__)
@@ -346,6 +352,40 @@ class AgentSession:
                 return True
         return False
 
+    async def _maybe_capture_external_memory(self, tool: Tool, result: str) -> None:
+        if not settings.auto_memory_external_results_enabled:
+            return
+        if tool.source_type in {"local", "builtin"}:
+            return
+        allowed_source_types = {
+            item.strip()
+            for item in settings.auto_memory_external_source_types.split(",")
+            if item.strip()
+        }
+        if allowed_source_types and tool.source_type not in allowed_source_types:
+            return
+        if not isinstance(result, str) or not result or result.startswith("ERROR:"):
+            return
+
+        refs = _extract_external_refs(result)
+        if not refs:
+            return
+
+        excerpt = _clip_text(
+            result,
+            limit=settings.auto_memory_external_max_excerpt_chars,
+        )
+        source_name = tool.source_name or tool.name
+        note = f"[{tool.source_type}/{source_name}] {excerpt} | Refs: {refs}"
+        try:
+            path, appended = await asyncio.to_thread(
+                append_memory_note_if_missing, note
+            )
+            if appended:
+                log.info("[memory] captured external result to %s", path.name)
+        except Exception:
+            log.exception("[memory] failed to capture external result")
+
     async def _run_verify_phase(self) -> str:
         commands = settings.verify_commands.strip()
         if not commands:
@@ -431,6 +471,7 @@ class AgentSession:
                 await self._emit("tool_execution_end", tool_call=tc, result=result)
 
                 tool_meta = get_tool(tc.name)
+                await self._maybe_capture_external_memory(tool_meta, result)
                 content = result
                 if tool_meta.source_type not in {"local", "builtin"}:
                     source_name = tool_meta.source_name or tool_meta.name

@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 from datetime import datetime
 from pathlib import Path
 
 from ragtag_crew.config import settings
 from ragtag_crew.context_builder import load_memory_index
+
+_TIMESTAMPED_NOTE_RE = re.compile(r"^-\s+\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\s+(.*)$")
 
 
 def _memory_dir() -> Path:
@@ -69,7 +72,9 @@ def _resolve_memory_target(name: str) -> Path:
     return path
 
 
-def _append_entries(existing: str, entries: list[str], *, title: str | None = None) -> str:
+def _append_entries(
+    existing: str, entries: list[str], *, title: str | None = None
+) -> str:
     existing = existing.strip()
     parts: list[str] = []
     if existing:
@@ -85,7 +90,49 @@ def _read_inbox_entries() -> list[str]:
     path = _memory_inbox_path()
     if not path.exists():
         return []
-    return [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip().startswith("- ")]
+    return [
+        line.strip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip().startswith("- ")
+    ]
+
+
+def _extract_normalized_notes(content: str) -> set[str]:
+    notes: set[str] = set()
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if not line.startswith("#"):
+            notes.add(line)
+        match = _TIMESTAMPED_NOTE_RE.match(line)
+        if match:
+            notes.add(match.group(1).strip())
+            continue
+        if line.startswith("- "):
+            notes.add(line[2:].strip())
+    return notes
+
+
+def _memory_note_exists(note: str) -> Path | None:
+    candidates: list[Path] = [_memory_index_path()]
+    memory_root = _memory_dir()
+    if memory_root.exists():
+        candidates.extend(
+            path
+            for path in sorted(
+                memory_root.glob("*.md"), key=lambda item: item.name.lower()
+            )
+            if path.name.lower() != "readme.md"
+        )
+
+    for path in candidates:
+        if not path.exists():
+            continue
+        content = path.read_text(encoding="utf-8")
+        if note in _extract_normalized_notes(content):
+            return path
+    return None
 
 
 def list_memory_files() -> list[str]:
@@ -129,6 +176,18 @@ def append_memory_note(note: str) -> Path:
     _atomic_write(path, content)
 
     return path
+
+
+def append_memory_note_if_missing(note: str) -> tuple[Path, bool]:
+    note = note.strip()
+    if not note:
+        raise ValueError("Memory note is empty")
+
+    existing_path = _memory_note_exists(note)
+    if existing_path is not None:
+        return existing_path, False
+
+    return append_memory_note(note), True
 
 
 def promote_inbox(target_name: str = "MEMORY.md") -> tuple[Path, int]:

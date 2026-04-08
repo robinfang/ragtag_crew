@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from ragtag_crew.agent import AgentSession
@@ -420,6 +421,118 @@ class AgentSessionTests(unittest.IsolatedAsyncioTestCase):
         tool_messages = [m for m in session.messages if m.get("role") == "tool"]
         self.assertEqual(len(tool_messages), 1)
         self.assertEqual(tool_messages[0]["content"], "plain content")
+
+    async def test_maybe_capture_external_memory_skips_builtin(self) -> None:
+        session = AgentSession(
+            model="openai/GLM-5.1",
+            tools=[Tool("noop", "noop", {"type": "object"}, _noop_tool)],
+        )
+        builtin_tool = Tool(
+            "read",
+            "read",
+            {"type": "object"},
+            _noop_tool,
+            source_type="builtin",
+            source_name="builtin",
+        )
+        with (
+            patch("ragtag_crew.agent.append_memory_note_if_missing") as mock_append,
+            patch(
+                "ragtag_crew.agent.settings.auto_memory_external_results_enabled", True
+            ),
+        ):
+            await session._maybe_capture_external_memory(builtin_tool, "plain content")
+
+        mock_append.assert_not_called()
+
+    async def test_maybe_capture_external_memory_skips_when_no_refs(self) -> None:
+        session = AgentSession(
+            model="openai/GLM-5.1",
+            tools=[Tool("noop", "noop", {"type": "object"}, _noop_tool)],
+        )
+        search_tool = Tool(
+            "web_search",
+            "search",
+            {"type": "object"},
+            _noop_tool,
+            source_type="search",
+            source_name="serper",
+        )
+        with (
+            patch("ragtag_crew.agent.append_memory_note_if_missing") as mock_append,
+            patch(
+                "ragtag_crew.agent.settings.auto_memory_external_results_enabled", True
+            ),
+        ):
+            await session._maybe_capture_external_memory(search_tool, "no refs here")
+
+        mock_append.assert_not_called()
+
+    async def test_maybe_capture_external_memory_appends_when_external_refs_exist(
+        self,
+    ) -> None:
+        session = AgentSession(
+            model="openai/GLM-5.1",
+            tools=[Tool("noop", "noop", {"type": "object"}, _noop_tool)],
+        )
+        search_tool = Tool(
+            "web_search",
+            "search",
+            {"type": "object"},
+            _noop_tool,
+            source_type="search",
+            source_name="serper",
+        )
+        with (
+            patch(
+                "ragtag_crew.agent.append_memory_note_if_missing",
+                return_value=(Path("inbox.md"), True),
+            ) as mock_append,
+            patch(
+                "ragtag_crew.agent.settings.auto_memory_external_results_enabled", True
+            ),
+        ):
+            await session._maybe_capture_external_memory(
+                search_tool,
+                "URL: https://example.com/doc useful result",
+            )
+
+        mock_append.assert_called_once()
+        note = mock_append.call_args[0][0]
+        self.assertIn("[search/serper]", note)
+        self.assertIn("https://example.com/doc", note)
+
+    async def test_maybe_capture_external_memory_respects_source_type_allowlist(
+        self,
+    ) -> None:
+        session = AgentSession(
+            model="openai/GLM-5.1",
+            tools=[Tool("noop", "noop", {"type": "object"}, _noop_tool)],
+        )
+        browser_tool = Tool(
+            "browser_open",
+            "browser",
+            {"type": "object"},
+            _noop_tool,
+            source_type="browser",
+            source_name="browser",
+        )
+        with (
+            patch("ragtag_crew.agent.append_memory_note_if_missing") as mock_append,
+            patch(
+                "ragtag_crew.agent.settings.auto_memory_external_results_enabled", True
+            ),
+            patch(
+                "ragtag_crew.agent.settings.auto_memory_external_source_types",
+                "search,openapi",
+            ),
+        ):
+            await session._maybe_capture_external_memory(
+                browser_tool,
+                "https://example.com/page",
+            )
+
+        mock_append.assert_not_called()
 
 
 if __name__ == "__main__":

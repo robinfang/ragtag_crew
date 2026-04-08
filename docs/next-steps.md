@@ -201,9 +201,9 @@ Claude Code 只保留最近 N 个工具结果，更早的自动清除。当前 r
 
 当前建议拆成三层渐进实现：
 
-1. **结构化引用提取**：在 `session_summary.py` 中从外部结果里提取 URL、Windows 绝对路径、Unix 绝对路径，增强跨轮回溯能力
-2. **来源前缀注入当前轮上下文**：在 `agent.py` 写入外部 tool result 时前置 `[来源: source_type/source_name]`，让模型在本轮也知道结果来自哪里
-3. **自动 memory 写入（待评估）**：仅对高价值外部发现考虑追加到 `memory/inbox.md`，这一层暂不默认启用
+1. **结构化引用提取**：已完成。在 `session_summary.py` 中从外部结果里提取 URL、Windows 绝对路径、Unix 绝对路径，增强跨轮回溯能力
+2. **来源前缀注入当前轮上下文**：已完成。在 `agent.py` 写入外部 tool result 时前置 `[来源: source_type/source_name]`，让模型在本轮也知道结果来自哪里
+3. **自动 memory 写入（评估版）**：已完成评估版，但默认关闭。仅对“外部工具 + 非错误结果 + 成功提取引用”的结果尝试去重追加到 `memory/inbox.md`
 
 需要回答的问题（来自 roadmap）：
 - 哪些结果只属于当前轮临时证据
