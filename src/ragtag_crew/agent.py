@@ -292,6 +292,10 @@ class AgentSession:
         elif trigger <= 0 or len(self.messages) <= trigger:
             return
 
+        split_index = len(self.messages) - keep_count
+        older_messages = self.messages[:split_index]
+        self._maybe_capture_precompact_memory(older_messages)
+
         summary, recent_messages = compact_history(
             messages=self.messages,
             previous_summary=self.session_summary,
@@ -355,6 +359,51 @@ class AgentSession:
             ):
                 return True
         return False
+
+    def _extract_precompact_memory_notes(
+        self, messages: list[dict[str, Any]]
+    ) -> list[str]:
+        if not settings.auto_memory_precompact_enabled:
+            return []
+
+        markers = {
+            item.strip().lower()
+            for item in settings.auto_memory_precompact_markers.split(",")
+            if item.strip()
+        }
+        if not markers:
+            return []
+
+        notes: list[str] = []
+        for message in messages:
+            role = message.get("role")
+            content = message.get("content", "")
+            if role not in {"user", "assistant"} or not isinstance(content, str):
+                continue
+
+            normalized = " ".join(content.split()).strip()
+            if not normalized:
+                continue
+            lowered = normalized.lower()
+            if not any(marker in lowered for marker in markers):
+                continue
+
+            prefix = "user" if role == "user" else "assistant"
+            excerpt = _clip_text(
+                normalized,
+                limit=settings.auto_memory_precompact_max_excerpt_chars,
+            )
+            notes.append(f"[precompact/{prefix}] {excerpt}")
+        return notes
+
+    def _maybe_capture_precompact_memory(self, messages: list[dict[str, Any]]) -> None:
+        for note in self._extract_precompact_memory_notes(messages):
+            try:
+                path, appended = append_memory_note_if_missing(note)
+                if appended:
+                    log.info("[memory] captured precompact note to %s", path.name)
+            except Exception:
+                log.exception("[memory] failed to capture precompact note")
 
     async def _maybe_capture_external_memory(self, tool: Tool, result: str) -> None:
         if not settings.auto_memory_external_results_enabled:

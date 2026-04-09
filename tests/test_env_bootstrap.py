@@ -84,8 +84,9 @@ class EnvBootstrapTests(unittest.TestCase):
 
             tree = _scan_tree(root, max_depth=1, skip_dirs=set())
 
-        self.assertIn("a/", tree)
-        self.assertNotIn("b/", tree)
+        lines = tree.splitlines()
+        self.assertTrue(any(line.strip().endswith("a/") for line in lines))
+        self.assertFalse(any(line.strip().endswith("b/") for line in lines))
 
     def test_scan_tree_skips_configured_dirs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     session_summary_recent_messages: int = 12
     session_summary_max_chars: int = 4000
     tool_result_keep_recent: int = 8
+    auto_memory_precompact_enabled: bool = False
+    auto_memory_precompact_markers: str = (
+        "记住,remember,偏好,preference,以后请,always,不要忘"
+    )
+    auto_memory_precompact_max_excerpt_chars: int = 200
 
     # Verify (two-stage: draft + verify)
     verify_enabled: bool = False

@@ -185,6 +185,71 @@ class AgentSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(session.messages), 2)
         self.assertIn("first", session.session_summary)
 
+    def test_precompact_memory_capture_disabled_by_default(self) -> None:
+        session = AgentSession(
+            model="openai/GLM-5.1",
+            tools=[Tool("noop", "noop", {"type": "object"}, _noop_tool)],
+        )
+        session.messages = [
+            {"role": "user", "content": "记住：以后始终先给结论"},
+            {"role": "assistant", "content": "ok"},
+            {"role": "user", "content": "latest"},
+        ]
+
+        with (
+            patch("ragtag_crew.agent.append_memory_note_if_missing") as mock_append,
+            patch("ragtag_crew.agent.settings.session_summary_recent_messages", 1),
+        ):
+            session.compact(force=True)
+
+        mock_append.assert_not_called()
+
+    def test_precompact_memory_capture_writes_marker_messages(self) -> None:
+        session = AgentSession(
+            model="openai/GLM-5.1",
+            tools=[Tool("noop", "noop", {"type": "object"}, _noop_tool)],
+        )
+        session.messages = [
+            {"role": "user", "content": "记住：以后始终先给结论"},
+            {"role": "assistant", "content": "收到"},
+            {"role": "user", "content": "latest"},
+        ]
+
+        with (
+            patch(
+                "ragtag_crew.agent.append_memory_note_if_missing",
+                return_value=(Path("inbox.md"), True),
+            ) as mock_append,
+            patch("ragtag_crew.agent.settings.auto_memory_precompact_enabled", True),
+            patch("ragtag_crew.agent.settings.session_summary_recent_messages", 1),
+        ):
+            session.compact(force=True)
+
+        mock_append.assert_called_once()
+        note = mock_append.call_args[0][0]
+        self.assertIn("[precompact/user]", note)
+        self.assertIn("记住：以后始终先给结论", note)
+
+    def test_precompact_memory_capture_ignores_non_marker_messages(self) -> None:
+        session = AgentSession(
+            model="openai/GLM-5.1",
+            tools=[Tool("noop", "noop", {"type": "object"}, _noop_tool)],
+        )
+        session.messages = [
+            {"role": "user", "content": "just a normal request"},
+            {"role": "assistant", "content": "normal reply"},
+            {"role": "user", "content": "latest"},
+        ]
+
+        with (
+            patch("ragtag_crew.agent.append_memory_note_if_missing") as mock_append,
+            patch("ragtag_crew.agent.settings.auto_memory_precompact_enabled", True),
+            patch("ragtag_crew.agent.settings.session_summary_recent_messages", 1),
+        ):
+            session.compact(force=True)
+
+        mock_append.assert_not_called()
+
     def test_detect_file_modifications_with_write(self) -> None:
         session = AgentSession(
             model="openai/GLM-5.1",
