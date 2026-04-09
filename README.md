@@ -32,6 +32,7 @@
 - 已提供最小 `/memory` 闭环：追加到 `memory/inbox.md`、查看文件、搜索历史记忆、手动 promote 到长期层
 - 已支持 `session_summary` 会话压缩：只保留最近消息窗口，其余折叠为摘要，并保留关键工具参数、调用顺序和更高保真度的摘要文本
 - 已支持压缩前记忆落盘评估版：可在会话压缩前把显式记忆意图的旧消息去重写入 `memory/inbox.md`（默认关闭）
+- 已支持最小 block 化 compression state：每次压缩会生成独立 compression block，并持久化到 session，用于更结构化地表示旧上下文
 - 已提供最小 `/context` 命令：查看当前摘要状态，并手动触发一次会话压缩
 - 已支持历史查询 CLI：可列出已保存会话，并查看指定 chat_id 的摘要与最近消息
 - 已建立阶段 1 外部能力接入层，支持平台工具、`MCP client`、固定 `OpenAPI provider`、`web_search`、`Everything` 与浏览器能力

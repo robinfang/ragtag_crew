@@ -88,6 +88,9 @@ class AgentSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("old requirement", session.session_summary)
         self.assertIn("old reply", session.session_summary)
         self.assertIn("old tool output", session.session_summary)
+        self.assertEqual(len(session.compression_blocks), 1)
+        self.assertEqual(session.compression_blocks[0]["message_count"], 3)
+        self.assertIn("old requirement", session.compression_blocks[0]["summary"])
         self.assertEqual(session.recent_message_count, 2)
         self.assertIsNotNone(session.summary_updated_at)
 
@@ -184,6 +187,7 @@ class AgentSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(changed)
         self.assertEqual(len(session.messages), 2)
         self.assertIn("first", session.session_summary)
+        self.assertEqual(len(session.compression_blocks), 1)
 
     def test_precompact_memory_capture_disabled_by_default(self) -> None:
         session = AgentSession(

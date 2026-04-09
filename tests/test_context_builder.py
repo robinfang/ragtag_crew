@@ -46,6 +46,7 @@ class ContextBuilderTests(unittest.TestCase):
                     base_system_prompt="base system",
                     enabled_skills=["review"],
                     protected_content="never drop this",
+                    compression_blocks="- Block 1: older context",
                     session_prompt="answer concisely",
                     session_summary="worked on context layering",
                 )
@@ -76,12 +77,16 @@ class ContextBuilderTests(unittest.TestCase):
             prompt.index("## Protected Content"),
         )
         self.assertLess(
-            prompt.index("## Protected Content"), prompt.index("## Session Prompt")
+            prompt.index("## Protected Content"), prompt.index("## Compression Blocks")
+        )
+        self.assertLess(
+            prompt.index("## Compression Blocks"), prompt.index("## Session Prompt")
         )
         self.assertLess(
             prompt.index("## Session Prompt"), prompt.index("## Session Summary")
         )
         self.assertIn("never drop this", prompt)
+        self.assertIn("older context", prompt)
 
     def test_build_system_prompt_skips_missing_optional_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

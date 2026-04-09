@@ -53,6 +53,14 @@ class SessionStoreTests(unittest.TestCase):
                     enabled_skills=["review"],
                     session_prompt="prefer concise answers",
                     protected_content="always preserve this rule",
+                    compression_blocks=[
+                        {
+                            "block_id": "b1",
+                            "created_at": 1.0,
+                            "message_count": 2,
+                            "summary": "older stuff",
+                        }
+                    ],
                     session_summary="Discussed repository layout.",
                     summary_updated_at=1234.5,
                     recent_message_count=6,
@@ -70,6 +78,8 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual(restored.enabled_skills, ["review"])
         self.assertEqual(restored.session_prompt, "prefer concise answers")
         self.assertEqual(restored.protected_content, "always preserve this rule")
+        self.assertEqual(len(restored.compression_blocks), 1)
+        self.assertEqual(restored.compression_blocks[0]["block_id"], "b1")
         self.assertEqual(restored.session_summary, "Discussed repository layout.")
         self.assertEqual(restored.summary_updated_at, 1234.5)
         self.assertEqual(restored.recent_message_count, 6)

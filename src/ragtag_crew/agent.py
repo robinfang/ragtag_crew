@@ -26,8 +26,10 @@ from ragtag_crew.memory_store import append_memory_note_if_missing
 from ragtag_crew.session_summary import (
     _clip_text,
     _extract_external_refs,
+    build_compression_block,
     clear_stale_tool_results,
     compact_history,
+    render_compression_blocks,
 )
 from ragtag_crew.tools import Tool, build_tool_schemas, get_tool
 
@@ -63,6 +65,7 @@ class AgentSession:
         enabled_skills: list[str] | None = None,
         session_prompt: str = "",
         protected_content: str = "",
+        compression_blocks: list[dict[str, Any]] | None = None,
         session_summary: str = "",
         summary_updated_at: float | None = None,
         recent_message_count: int = 0,
@@ -77,6 +80,7 @@ class AgentSession:
         self.enabled_skills = list(enabled_skills or [])
         self.session_prompt = session_prompt
         self.protected_content = protected_content
+        self.compression_blocks = list(compression_blocks or [])
         self.session_summary = session_summary
         self.summary_updated_at = summary_updated_at
         self.recent_message_count = recent_message_count
@@ -160,6 +164,7 @@ class AgentSession:
         self.messages.clear()
         self.session_prompt = ""
         self.protected_content = ""
+        self.compression_blocks = []
         self.session_summary = ""
         self.summary_updated_at = None
         self.recent_message_count = 0
@@ -305,6 +310,10 @@ class AgentSession:
         if recent_messages == self.messages and summary == self.session_summary:
             return
 
+        block = build_compression_block(older_messages)
+        if block is not None:
+            self.compression_blocks.append(block.to_dict())
+
         self.messages = recent_messages
         self.messages = clear_stale_tool_results(
             self.messages,
@@ -320,6 +329,7 @@ class AgentSession:
             base_system_prompt=self.system_prompt,
             enabled_skills=self.enabled_skills,
             protected_content=self.protected_content,
+            compression_blocks=render_compression_blocks(self.compression_blocks),
             session_prompt=self.session_prompt,
             session_summary=self.session_summary,
             planning_enabled=self.planning_enabled,

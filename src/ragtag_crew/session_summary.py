@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import re
+import time
+from dataclasses import asdict, dataclass
 from typing import Any
 
 _SUMMARY_TEXT_LIMIT = 500
@@ -12,6 +14,17 @@ _STALE_TRUNCATE_LIMIT = 200
 _URL_RE = re.compile(r"https?://[^\s\]\)>,;]+")
 _WINDOWS_PATH_RE = re.compile(r"\b[A-Za-z]:\\[^\s\]\)>,;]+")
 _UNIX_PATH_RE = re.compile(r"(?<![A-Za-z0-9._-])/(?:[^\s\]\)>,;:]+/?)+")
+
+
+@dataclass(frozen=True)
+class CompressionBlock:
+    block_id: str
+    created_at: float
+    message_count: int
+    summary: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 def clear_stale_tool_results(
@@ -57,6 +70,65 @@ def compact_history(
     recent_messages = messages[split_index:]
     summary = _merge_summary(previous_summary, older_messages, max_chars=max_chars)
     return summary, recent_messages
+
+
+def build_compression_block(
+    messages: list[dict[str, Any]],
+    *,
+    max_chars: int = 1200,
+) -> CompressionBlock | None:
+    if not messages:
+        return None
+
+    entries = [_summarize_message(message) for message in messages]
+    entries = [entry for entry in entries if entry]
+    if not entries:
+        return None
+
+    summary = _clip("\n".join(f"- {entry}" for entry in entries), max_chars)
+    return CompressionBlock(
+        block_id=f"block-{int(time.time() * 1000)}",
+        created_at=time.time(),
+        message_count=len(messages),
+        summary=summary,
+    )
+
+
+def render_compression_blocks(
+    blocks: list[dict[str, Any]] | list[CompressionBlock],
+    *,
+    max_blocks: int = 6,
+    max_chars: int = 2000,
+) -> str:
+    if not blocks:
+        return ""
+
+    normalized: list[CompressionBlock] = []
+    for block in blocks[-max_blocks:]:
+        if isinstance(block, CompressionBlock):
+            normalized.append(block)
+            continue
+        try:
+            normalized.append(
+                CompressionBlock(
+                    block_id=str(block.get("block_id", "")),
+                    created_at=float(block.get("created_at", 0)),
+                    message_count=int(block.get("message_count", 0)),
+                    summary=str(block.get("summary", "")).strip(),
+                )
+            )
+        except Exception:
+            continue
+
+    if not normalized:
+        return ""
+
+    lines: list[str] = []
+    for index, block in enumerate(normalized, start=1):
+        lines.append(
+            f"- Block {index} ({block.message_count} msgs, id={block.block_id}): {block.summary}"
+        )
+    return _clip("\n".join(lines), max_chars)
 
 
 def _merge_summary(
