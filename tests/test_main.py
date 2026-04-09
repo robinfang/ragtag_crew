@@ -33,11 +33,13 @@ class MainCliTests(unittest.TestCase):
 
     def test_check_fails_without_token(self) -> None:
         stdout = io.StringIO()
-        with patch.object(main_module.settings, "telegram_bot_token", ""), \
-             patch.object(main_module.settings, "default_model", "test-model"), \
-             patch.object(main_module.settings, "default_tool_preset", "coding"), \
-             patch.object(main_module.settings, "allowed_user_ids", ""), \
-             redirect_stdout(stdout):
+        with (
+            patch.object(main_module.settings, "telegram_bot_token", ""),
+            patch.object(main_module.settings, "default_model", "test-model"),
+            patch.object(main_module.settings, "default_tool_preset", "coding"),
+            patch.object(main_module.settings, "allowed_user_ids", ""),
+            redirect_stdout(stdout),
+        ):
             rc = main_module.main(["--check"])
 
         self.assertEqual(rc, 1)
@@ -47,11 +49,13 @@ class MainCliTests(unittest.TestCase):
 
     def test_check_passes_with_token(self) -> None:
         stdout = io.StringIO()
-        with patch.object(main_module.settings, "telegram_bot_token", "fake-token"), \
-             patch.object(main_module.settings, "default_model", "openai/gpt-4"), \
-             patch.object(main_module.settings, "default_tool_preset", "coding"), \
-             patch.object(main_module.settings, "allowed_user_ids", "42"), \
-             redirect_stdout(stdout):
+        with (
+            patch.object(main_module.settings, "telegram_bot_token", "fake-token"),
+            patch.object(main_module.settings, "default_model", "openai/gpt-4"),
+            patch.object(main_module.settings, "default_tool_preset", "coding"),
+            patch.object(main_module.settings, "allowed_user_ids", "42"),
+            redirect_stdout(stdout),
+        ):
             rc = main_module.main(["--check"])
 
         self.assertEqual(rc, 0)
@@ -63,11 +67,13 @@ class MainCliTests(unittest.TestCase):
 
     def test_check_handles_malformed_user_ids(self) -> None:
         stdout = io.StringIO()
-        with patch.object(main_module.settings, "telegram_bot_token", "fake-token"), \
-             patch.object(main_module.settings, "default_model", "test-model"), \
-             patch.object(main_module.settings, "default_tool_preset", "coding"), \
-             patch.object(main_module.settings, "allowed_user_ids", "42,abc,, "), \
-             redirect_stdout(stdout):
+        with (
+            patch.object(main_module.settings, "telegram_bot_token", "fake-token"),
+            patch.object(main_module.settings, "default_model", "test-model"),
+            patch.object(main_module.settings, "default_tool_preset", "coding"),
+            patch.object(main_module.settings, "allowed_user_ids", "42,abc,, "),
+            redirect_stdout(stdout),
+        ):
             rc = main_module.main(["--check"])
 
         self.assertEqual(rc, 0)
@@ -79,7 +85,9 @@ class MainCliTests(unittest.TestCase):
         original = main_module.settings.working_dir
         try:
             main_module._apply_cli_overrides(
-                main_module.build_arg_parser().parse_args(["--working-dir", "/tmp/project"])
+                main_module.build_arg_parser().parse_args(
+                    ["--working-dir", "/tmp/project"]
+                )
             )
             self.assertEqual(main_module.settings.working_dir, "/tmp/project")
         finally:
@@ -89,7 +97,9 @@ class MainCliTests(unittest.TestCase):
         original = main_module.settings.default_model
         try:
             main_module._apply_cli_overrides(
-                main_module.build_arg_parser().parse_args(["--model", "claude-3-5-sonnet"])
+                main_module.build_arg_parser().parse_args(
+                    ["--model", "claude-3-5-sonnet"]
+                )
             )
             self.assertEqual(main_module.settings.default_model, "claude-3-5-sonnet")
         finally:
@@ -133,7 +143,9 @@ class MainCliTests(unittest.TestCase):
         original_log = main_module.settings.log_level
         try:
             main_module._apply_cli_overrides(
-                main_module.build_arg_parser().parse_args(["--dev", "--log-level", "WARNING"])
+                main_module.build_arg_parser().parse_args(
+                    ["--dev", "--log-level", "WARNING"]
+                )
             )
             self.assertTrue(main_module.settings.dev_mode)
             self.assertEqual(main_module.settings.log_level, "WARNING")
@@ -153,6 +165,32 @@ class MainCliTests(unittest.TestCase):
         finally:
             main_module.settings.working_dir = original_wd
             main_module.settings.default_model = original_model
+
+    def test_history_list_prints_saved_sessions(self) -> None:
+        stdout = io.StringIO()
+        with patch(
+            "ragtag_crew.main._show_history_list",
+            side_effect=lambda: print("Saved sessions:\n\n- chat_id=100", file=stdout),
+        ):
+            rc = main_module.main(["--history-list"])
+
+        self.assertEqual(rc, 0)
+        self.assertIn("Saved sessions:", stdout.getvalue())
+
+    def test_history_prints_session_summary(self) -> None:
+        stdout = io.StringIO()
+        with patch(
+            "ragtag_crew.main._show_history",
+            side_effect=lambda chat_id: print(
+                f"Session {chat_id}\n\nsession_summary: hi", file=stdout
+            ),
+        ):
+            rc = main_module.main(["--history", "123"])
+
+        self.assertEqual(rc, 0)
+        out = stdout.getvalue()
+        self.assertIn("Session 123", out)
+        self.assertIn("session_summary: hi", out)
 
 
 if __name__ == "__main__":

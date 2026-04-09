@@ -219,6 +219,10 @@ Claude Code 只保留最近 N 个工具结果，更早的自动清除。当前 r
 
 Meta-Harness 附录 D 建议"提供小 CLI 查询历史，方便人工介入和调试"。
 
+**现状**：已完成基础版，支持：
+- `ragtag-crew --history-list`：列出已保存 session
+- `ragtag-crew --history <chat_id>`：查看该会话的模型、工具预设、session_prompt、protected_content、session_summary 与最近消息
+
 ### M8：上下文系统高级增强
 
 `context-system-design.md` 规划的后续阶段：

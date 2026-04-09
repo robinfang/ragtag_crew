@@ -82,6 +82,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="校验配置完整性，不启动 bot",
     )
+    parser.add_argument(
+        "--history-list",
+        action="store_true",
+        help="列出已保存的会话历史",
+    )
+    parser.add_argument(
+        "--history",
+        type=int,
+        help="查看指定 chat_id 的会话历史摘要",
+    )
     return parser
 
 
@@ -130,6 +140,47 @@ def _check_config() -> None:
         print("OK")
 
 
+def _show_history_list() -> None:
+    from ragtag_crew.telegram.session_store import list_sessions
+
+    records = list_sessions()
+    if not records:
+        print("No saved sessions.")
+        return
+
+    print("Saved sessions:\n")
+    for record in records:
+        print(
+            f"- chat_id={record.chat_id} model={record.model or '(unknown)'} "
+            f"tools={record.tool_preset or '(unknown)'} last_active_at={record.last_active_at:.0f}"
+        )
+
+
+def _show_history(chat_id: int) -> None:
+    from ragtag_crew.telegram.session_store import read_session_payload
+
+    payload = read_session_payload(chat_id)
+    print(f"Session {chat_id}\n")
+    print(f"model: {payload.get('model', '(unknown)')}")
+    print(f"tools: {payload.get('tool_preset', '(unknown)')}")
+    print(f"enabled_skills: {', '.join(payload.get('enabled_skills', [])) or '(none)'}")
+    print(f"session_prompt: {payload.get('session_prompt', '') or '(empty)'}")
+    print(f"protected_content: {payload.get('protected_content', '') or '(empty)'}")
+    print(f"session_summary: {payload.get('session_summary', '') or '(empty)'}")
+    print("\nRecent messages:")
+    messages = payload.get("messages", []) or []
+    if not messages:
+        print("- (none)")
+        return
+    for msg in messages[-10:]:
+        role = msg.get("role", "?")
+        content = str(msg.get("content", "") or "")
+        clipped = " ".join(content.split())
+        if len(clipped) > 120:
+            clipped = clipped[:117].rstrip() + "..."
+        print(f"- {role}: {clipped}")
+
+
 def _apply_cli_overrides(args: argparse.Namespace) -> None:
     if args.working_dir:
         settings.working_dir = args.working_dir
@@ -147,6 +198,7 @@ def _apply_cli_overrides(args: argparse.Namespace) -> None:
 
 # -- file watcher for --dev mode ----------------------------------------------
 
+
 def _start_file_watcher() -> None:
     """Watch src/ragtag_crew/**/*.py and restart the process on changes."""
     import threading
@@ -158,9 +210,7 @@ def _start_file_watcher() -> None:
         return
 
     def _watch_loop() -> None:
-        logging.getLogger(__name__).info(
-            "[dev] watching %s for changes...", watch_path
-        )
+        logging.getLogger(__name__).info("[dev] watching %s for changes...", watch_path)
         try:
             for _changes in watch(watch_path, stop_event=threading.Event()):
                 logging.getLogger(__name__).info("[dev] file changed, restarting...")
@@ -176,6 +226,7 @@ def _start_file_watcher() -> None:
 
 
 # -- REPL mode ----------------------------------------------------------------
+
 
 async def _repl_loop() -> None:
     """Terminal interaction mode — talk to the agent without Telegram."""
@@ -264,6 +315,7 @@ async def _repl_loop() -> None:
 
 # -- main entry ---------------------------------------------------------------
 
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     _apply_cli_overrides(args)
@@ -271,6 +323,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.check:
         _check_config()
         return 0 if settings.telegram_bot_token.strip() else 1
+
+    if args.history_list:
+        _show_history_list()
+        return 0
+
+    if args.history is not None:
+        _show_history(args.history)
+        return 0
 
     if args.repl:
         _setup_logging()
@@ -283,7 +343,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     log.info("ragtag_crew starting  pid=%s", os.getpid())
 
     if not settings.telegram_bot_token:
-        log.error("TELEGRAM_BOT_TOKEN not set.  Copy .env.example to .env and fill it in.")
+        log.error(
+            "TELEGRAM_BOT_TOKEN not set.  Copy .env.example to .env and fill it in."
+        )
         return 1
 
     log.info("ragtag_crew starting")

@@ -11,7 +11,9 @@ from ragtag_crew.agent import AgentSession
 from ragtag_crew.config import settings
 from ragtag_crew.telegram.session_store import (
     cleanup_expired_sessions,
+    list_sessions,
     load_session,
+    read_session_payload,
     save_session,
 )
 from ragtag_crew.tools import Tool
@@ -117,6 +119,52 @@ class SessionStoreTests(unittest.TestCase):
                 restored = load_session(123, default_system_prompt="fallback")
 
         self.assertIsNone(restored)
+
+    def test_list_sessions_returns_sorted_records(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with session_storage(root):
+                (root / "1.json").write_text(
+                    json.dumps(
+                        {
+                            "chat_id": 1,
+                            "last_active_at": 10,
+                            "model": "m1",
+                            "tool_preset": "coding",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                (root / "2.json").write_text(
+                    json.dumps(
+                        {
+                            "chat_id": 2,
+                            "last_active_at": 20,
+                            "model": "m2",
+                            "tool_preset": "readonly",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+
+                records = list_sessions()
+
+        self.assertEqual([r.chat_id for r in records], [2, 1])
+        self.assertEqual(records[0].model, "m2")
+        self.assertEqual(records[1].tool_preset, "coding")
+
+    def test_read_session_payload_returns_raw_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with session_storage(root):
+                (root / "123.json").write_text(
+                    json.dumps({"chat_id": 123, "session_summary": "hello"}),
+                    encoding="utf-8",
+                )
+                payload = read_session_payload(123)
+
+        self.assertEqual(payload["chat_id"], 123)
+        self.assertEqual(payload["session_summary"], "hello")
 
 
 if __name__ == "__main__":

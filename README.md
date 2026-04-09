@@ -33,6 +33,7 @@
 - 已支持 `session_summary` 会话压缩：只保留最近消息窗口，其余折叠为摘要，并保留关键工具参数、调用顺序和更高保真度的摘要文本
 - 已支持压缩前记忆落盘评估版：可在会话压缩前把显式记忆意图的旧消息去重写入 `memory/inbox.md`（默认关闭）
 - 已提供最小 `/context` 命令：查看当前摘要状态，并手动触发一次会话压缩
+- 已支持历史查询 CLI：可列出已保存会话，并查看指定 chat_id 的摘要与最近消息
 - 已建立阶段 1 外部能力接入层，支持平台工具、`MCP client`、固定 `OpenAPI provider`、`web_search`、`Everything` 与浏览器能力
 - MCP 发现和调用链路已补全超时保护；外部能力初始化支持日志化、部分成功保留与失败后自动重试
 - 已支持最小联网搜索 API 接入口，可按配置启用 `web_search`
@@ -64,6 +65,7 @@ uv run python -m ragtag_crew.main
 - 用 `/memory promote [target]` 把 `inbox.md` 中待整理条目并入 `MEMORY.md` 或指定记忆文件
 - 用 `/context` 查看当前会话摘要状态，必要时用 `/context compress` 手动收口
 - 用 `/prompt set <text>` 设置当前会话临时规则，用 `/prompt protect <text>` 写入受保护内容
+- 可用 `ragtag-crew --history-list` 列出已保存会话，用 `ragtag-crew --history <chat_id>` 查看会话摘要与最近消息
 - 会话忙碌时直接问“进度”“进展”“好了没”等，机器人会返回实时快照
 - 用 `/cancel` 中止当前任务，机器人会立即确认已发送取消信号
 - 复制 `mcp_servers.example.json` 为 `mcp_servers.local.json` 后，可通过 `/mcp` 查看 MCP server 状态

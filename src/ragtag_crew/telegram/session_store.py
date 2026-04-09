@@ -7,6 +7,7 @@ import logging
 import os
 import tempfile
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from ragtag_crew.agent import AgentSession
@@ -14,6 +15,15 @@ from ragtag_crew.config import settings
 from ragtag_crew.tools import get_tools_for_preset
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class SessionRecord:
+    chat_id: int
+    path: Path
+    last_active_at: float
+    model: str
+    tool_preset: str
 
 
 def _storage_dir() -> Path:
@@ -43,6 +53,35 @@ def cleanup_expired_sessions() -> None:
 
     for tmp_path in root.glob("*.tmp"):
         tmp_path.unlink(missing_ok=True)
+
+
+def list_sessions() -> list[SessionRecord]:
+    records: list[SessionRecord] = []
+    for path in sorted(_storage_dir().glob("*.json"), key=lambda item: item.name):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            chat_id = int(payload.get("chat_id", path.stem))
+        except Exception:
+            log.warning("Skipping unreadable session file: %s", path)
+            continue
+        records.append(
+            SessionRecord(
+                chat_id=chat_id,
+                path=path,
+                last_active_at=float(payload.get("last_active_at", 0)),
+                model=str(payload.get("model", "")),
+                tool_preset=str(payload.get("tool_preset", "")),
+            )
+        )
+    records.sort(key=lambda item: (-item.last_active_at, item.chat_id))
+    return records
+
+
+def read_session_payload(chat_id: int) -> dict:
+    path = _session_path(chat_id)
+    if not path.exists():
+        raise FileNotFoundError(f"Session not found: {chat_id}")
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def load_session(chat_id: int, *, default_system_prompt: str) -> AgentSession | None:
