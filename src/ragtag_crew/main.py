@@ -141,8 +141,12 @@ def _check_config() -> None:
 
 
 def _show_history_list() -> None:
-    from ragtag_crew.telegram.session_store import list_sessions
+    from ragtag_crew.telegram.session_store import (
+        cleanup_expired_sessions,
+        list_sessions,
+    )
 
+    cleanup_expired_sessions()
     records = list_sessions()
     if not records:
         print("No saved sessions.")
@@ -157,9 +161,18 @@ def _show_history_list() -> None:
 
 
 def _show_history(chat_id: int) -> None:
-    from ragtag_crew.telegram.session_store import read_session_payload
+    from ragtag_crew.telegram.session_store import (
+        cleanup_expired_sessions,
+        read_session_payload,
+    )
 
-    payload = read_session_payload(chat_id)
+    cleanup_expired_sessions()
+    try:
+        payload = read_session_payload(chat_id)
+    except FileNotFoundError:
+        print(f"Session not found: {chat_id}")
+        return
+
     print(f"Session {chat_id}\n")
     print(f"model: {payload.get('model', '(unknown)')}")
     print(f"tools: {payload.get('tool_preset', '(unknown)')}")

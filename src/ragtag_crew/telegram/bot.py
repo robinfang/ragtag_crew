@@ -616,7 +616,7 @@ async def _cmd_context(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             await update.message.reply_text("Please wait — agent is busy.")
             return
 
-        changed = session.compact(force=True)
+        changed = await session.compact(force=True)
         save_session(chat_id, session)
         if not changed:
             log.debug("[chat %s] /context compress — no change", chat_id)

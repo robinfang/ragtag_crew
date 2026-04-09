@@ -508,12 +508,15 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("/context compress", reply)
 
     async def test_cmd_context_compress_persists_when_changed(self) -> None:
+        async def _compact(**_kwargs):  # type: ignore[no-untyped-def]
+            return True
+
         session = SimpleNamespace(
             is_busy=False,
             messages=[{"role": "user", "content": "hi"}],
             session_summary="compacted summary",
             summary_updated_at=None,
-            compact=lambda force=False: True,
+            compact=_compact,
         )
         bot_module._sessions[100] = session
         update = FakeUpdate(chat_id=100)
@@ -528,12 +531,15 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Context compacted.", update.message.reply_calls[0]["text"])
 
     async def test_cmd_context_compress_reports_noop(self) -> None:
+        async def _compact(**_kwargs):  # type: ignore[no-untyped-def]
+            return False
+
         session = SimpleNamespace(
             is_busy=False,
             messages=[],
             session_summary="",
             summary_updated_at=None,
-            compact=lambda force=False: False,
+            compact=_compact,
         )
         bot_module._sessions[100] = session
         update = FakeUpdate(chat_id=100)

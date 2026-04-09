@@ -170,7 +170,7 @@ class AgentSession:
         self.recent_message_count = 0
         self.browser_attached_confirmed = False
 
-    def compact(self, *, force: bool = False) -> bool:
+    async def compact(self, *, force: bool = False) -> bool:
         """Compact older history into ``session_summary``.
 
         When ``force`` is false, compaction follows the configured trigger.
@@ -179,7 +179,7 @@ class AgentSession:
         """
         before_messages = list(self.messages)
         before_summary = self.session_summary
-        self._maybe_compact_history(force=force)
+        await self._maybe_compact_history(force=force)
         return (
             self.messages != before_messages or self.session_summary != before_summary
         )
@@ -239,7 +239,7 @@ class AgentSession:
 
             return final_content
         finally:
-            self._maybe_compact_history()
+            await self._maybe_compact_history()
             self._busy = False
             self._active_started_at = None
             self._active_turn = 0
@@ -286,8 +286,7 @@ class AgentSession:
             ]
         self.messages.append(assistant_msg)
 
-    def _maybe_compact_history(self, *, force: bool = False) -> None:
-        self.recent_message_count = len(self.messages)
+    async def _maybe_compact_history(self, *, force: bool = False) -> None:
         trigger = settings.session_summary_trigger_messages
         keep_count = max(settings.session_summary_recent_messages, 1)
 
@@ -299,7 +298,7 @@ class AgentSession:
 
         split_index = len(self.messages) - keep_count
         older_messages = self.messages[:split_index]
-        self._maybe_capture_precompact_memory(older_messages)
+        await self._maybe_capture_precompact_memory(older_messages)
 
         summary, recent_messages = compact_history(
             messages=self.messages,
@@ -406,10 +405,14 @@ class AgentSession:
             notes.append(f"[precompact/{prefix}] {excerpt}")
         return notes
 
-    def _maybe_capture_precompact_memory(self, messages: list[dict[str, Any]]) -> None:
+    async def _maybe_capture_precompact_memory(
+        self, messages: list[dict[str, Any]]
+    ) -> None:
         for note in self._extract_precompact_memory_notes(messages):
             try:
-                path, appended = append_memory_note_if_missing(note)
+                path, appended = await asyncio.to_thread(
+                    append_memory_note_if_missing, note
+                )
                 if appended:
                     log.info("[memory] captured precompact note to %s", path.name)
             except Exception:

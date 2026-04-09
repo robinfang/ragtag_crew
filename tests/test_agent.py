@@ -94,7 +94,7 @@ class AgentSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.recent_message_count, 2)
         self.assertIsNotNone(session.summary_updated_at)
 
-    def test_compact_summary_keeps_external_tool_metadata(self) -> None:
+    async def test_compact_summary_keeps_external_tool_metadata(self) -> None:
         session = AgentSession(
             model="openai/GLM-5.1",
             tools=[Tool("noop", "noop", {"type": "object"}, _noop_tool)],
@@ -113,7 +113,7 @@ class AgentSessionTests(unittest.IsolatedAsyncioTestCase):
         ]
 
         with patch("ragtag_crew.agent.settings.session_summary_recent_messages", 2):
-            changed = session.compact(force=True)
+            changed = await session.compact(force=True)
 
         self.assertTrue(changed)
         self.assertIn("web_search/search/serper", session.session_summary)
@@ -167,7 +167,7 @@ class AgentSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("正在执行: write", text)
         self.assertIn("最近输出: 正在补测试", text)
 
-    def test_manual_compact_respects_force_flag(self) -> None:
+    async def test_manual_compact_respects_force_flag(self) -> None:
         session = AgentSession(
             model="openai/GLM-5.1",
             tools=[Tool("noop", "noop", {"type": "object"}, _noop_tool)],
@@ -182,14 +182,14 @@ class AgentSessionTests(unittest.IsolatedAsyncioTestCase):
             patch("ragtag_crew.agent.settings.session_summary_trigger_messages", 10),
             patch("ragtag_crew.agent.settings.session_summary_recent_messages", 2),
         ):
-            changed = session.compact(force=True)
+            changed = await session.compact(force=True)
 
         self.assertTrue(changed)
         self.assertEqual(len(session.messages), 2)
         self.assertIn("first", session.session_summary)
         self.assertEqual(len(session.compression_blocks), 1)
 
-    def test_precompact_memory_capture_disabled_by_default(self) -> None:
+    async def test_precompact_memory_capture_disabled_by_default(self) -> None:
         session = AgentSession(
             model="openai/GLM-5.1",
             tools=[Tool("noop", "noop", {"type": "object"}, _noop_tool)],
@@ -204,11 +204,11 @@ class AgentSessionTests(unittest.IsolatedAsyncioTestCase):
             patch("ragtag_crew.agent.append_memory_note_if_missing") as mock_append,
             patch("ragtag_crew.agent.settings.session_summary_recent_messages", 1),
         ):
-            session.compact(force=True)
+            await session.compact(force=True)
 
         mock_append.assert_not_called()
 
-    def test_precompact_memory_capture_writes_marker_messages(self) -> None:
+    async def test_precompact_memory_capture_writes_marker_messages(self) -> None:
         session = AgentSession(
             model="openai/GLM-5.1",
             tools=[Tool("noop", "noop", {"type": "object"}, _noop_tool)],
@@ -227,14 +227,14 @@ class AgentSessionTests(unittest.IsolatedAsyncioTestCase):
             patch("ragtag_crew.agent.settings.auto_memory_precompact_enabled", True),
             patch("ragtag_crew.agent.settings.session_summary_recent_messages", 1),
         ):
-            session.compact(force=True)
+            await session.compact(force=True)
 
         mock_append.assert_called_once()
         note = mock_append.call_args[0][0]
         self.assertIn("[precompact/user]", note)
         self.assertIn("记住：以后始终先给结论", note)
 
-    def test_precompact_memory_capture_ignores_non_marker_messages(self) -> None:
+    async def test_precompact_memory_capture_ignores_non_marker_messages(self) -> None:
         session = AgentSession(
             model="openai/GLM-5.1",
             tools=[Tool("noop", "noop", {"type": "object"}, _noop_tool)],
@@ -250,7 +250,7 @@ class AgentSessionTests(unittest.IsolatedAsyncioTestCase):
             patch("ragtag_crew.agent.settings.auto_memory_precompact_enabled", True),
             patch("ragtag_crew.agent.settings.session_summary_recent_messages", 1),
         ):
-            session.compact(force=True)
+            await session.compact(force=True)
 
         mock_append.assert_not_called()
 
