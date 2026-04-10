@@ -8,10 +8,10 @@
 
 ## 当前定位
 
-- 当前唯一正式接入渠道是 Telegram
+- 正式接入渠道：Telegram（生产）和 REPL 终端（开发/调试）
 - Agent 跑在你自己的机器上，模型调用走你自己的 API key
 - 用 Python 自建 agent loop，不依赖第三方 agent SDK
-- 后续可以再扩展 Web、CLI、Discord 等入口，但现在不提前做多前端抽象
+- 后续可以再扩展 Web、Discord 等入口，但现在不提前做多前端抽象
 
 ## 当前能力
 
@@ -24,7 +24,9 @@
 - 已支持 `/cancel` 显式确认反馈，取消与超时在运行时语义上分离
 - Telegram 表格渲染已做基础适配：Markdown 风格表格会自动转成等宽代码块，避免消息中表格错位
 - 完善的命令级日志记录：状态变更 INFO、权限/失败 WARNING、只读查询 DEBUG
-- 已支持 LLM 超时、整轮超时和 JSON 会话持久化
+- REPL 终端模式已支持实时流式输出、执行轨迹收集、会话持久化和 /plan 命令
+- `prompts.py` 提取了共用的 `DEFAULT_SYSTEM_PROMPT`，Telegram 与 REPL 共享同一套系统提示词
+- `session_store.py` 已从 `telegram/` 提升到包根目录，REPL 和 Telegram 共用同一套持久化逻辑
 - 已支持仓库内本地 Markdown skill 的会话级启用，并改为“名称 + 摘要 + 路径”的轻量注入；完整内容按需读取
 - 已接入 `PROJECT.md` / `USER.local.md` / `MEMORY.md` 分层上下文
 - 已支持 `/prompt` 会话级临时规则，以及独立的 Protected Content 注入层，用于放置不应被普通会话压缩影响的规则
@@ -89,12 +91,16 @@ uv run python -m ragtag_crew.main
 ragtag_crew/
 ├── src/
 │   └── ragtag_crew/
-│       ├── main.py               # 入口
+│       ├── main.py               # 入口（含 REPL 模式）
 │       ├── config.py             # 配置加载
 │       ├── agent.py              # 自建 agent loop
 │       ├── llm.py                # litellm 封装
 │       ├── context_builder.py    # system prompt 分层组装
 │       ├── session_summary.py    # 会话压缩与摘要
+│       ├── session_store.py      # 会话持久化（Telegram 与 REPL 共用）
+│       ├── prompts.py            # 共用系统提示词常量
+│       ├── repl_streamer.py      # REPL 实时流式输出
+│       ├── trace.py              # 执行轨迹收集
 │       ├── env_bootstrap.py      # 工作区快照与环境引导
 │       ├── telegram/
 │       │   ├── bot.py            # Telegram 接入层
@@ -113,6 +119,7 @@ ragtag_crew/
 │           ├── shell_tools.py    # bash（含删除命令拦截）
 │           ├── search_tools.py   # grep / find / ls
 │           └── path_utils.py     # 路径沙箱工具函数
+├── tests/                        # 测试
 ├── archive/
 │   └── pi-sdk-validation/    # 早期 Pi SDK 验证资料
 ├── PROJECT.md                # 仓库共享的项目背景

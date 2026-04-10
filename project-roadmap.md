@@ -34,9 +34,9 @@
 - `/cancel` 中断命令已可用（用户取消 vs 超时区分提示）
 - `/cancel` 已补显式确认反馈；忙碌时支持直接查询运行进度
 - 可用模型列表（`/model` 无参数列出预设模型）
-- 开发模式（`--dev` 文件监听自动重启 + `--repl` 本地终端交互）
-- 执行轨迹收集（TraceCollector，JSONL 格式）
-- Planning 机制（system prompt 注入规划协议）
+- 开发模式（`--dev` 文件监听自动重启 + `--repl` 本地终端交互，已支持流式输出、trace、持久化、/plan）
+- 执行轨迹收集（TraceCollector，JSONL 格式，Telegram 与 REPL 均已接入）
+- Planning 机制（system prompt 注入规划协议，Telegram 与 REPL 均支持 /plan）
 - `/prompt` 与 Protected Content 已具备基础版
 - 两阶段调用（`draft + verify`）已具备基础版，但默认仍关闭
 - 固定 OpenAPI 工具接入（paper-search + paper-collector）
@@ -311,16 +311,17 @@
 
 ### M7：控制与诊断能力可用（部分完成）
 
-- ✅ 执行轨迹收集（TraceCollector，JSONL）
+- ✅ 执行轨迹收集（TraceCollector，JSONL，Telegram 与 REPL 均已接入）
 - ✅ /cancel 中断 + /model 模型列表
 - ✅ 开发模式（--dev / --repl）
-- ✅ Planning 机制
+- ✅ Planning 机制（Telegram 与 REPL 均支持 /plan）
 - ✅ env bootstrap
 - ✅ 运行时进度追踪与进度查询
 - ✅ `/cancel` 显式确认反馈
 - ✅ Telegram 表格渲染（代码块方案）
 - ✅ 历史查询 CLI
 - ✅ 两阶段调用（基础版）
+- ✅ REPL 实时流式输出（ReplStreamer）+ 会话持久化 + 共用系统提示词
 - 待做：trace 查询入口、最小 CI、verify 默认化与技能/外部能力契约补全文档
 
 ### M8：上下文系统高级能力成熟

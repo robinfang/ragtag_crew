@@ -35,5 +35,5 @@
 ## 开发模式
 
 - **`--dev`**：自动设置 `dev_mode=True` + `log_level=DEBUG`，启动 watchfiles 监听 `src/ragtag_crew/**/*.py`，变更时 `os.execv` 重启。显式 `--log-level` 优先于 `--dev`
-- **`--repl`**：不连 Telegram，终端直接对话 AgentSession，支持 /new /model /cancel /tools /quit
+- **`--repl`**：不连 Telegram，终端直接对话 AgentSession，支持 /new /model /cancel /tools /plan /skills /skill /quit；具备实时流式输出（ReplStreamer）、执行轨迹收集（TraceCollector）和 JSON 会话持久化（chat_id=0）
 - **不放宽超时**：开发模式保持与生产一致的超时配置，避免行为差异
