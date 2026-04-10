@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from ragtag_crew.agent import AgentSession
 from ragtag_crew.config import settings
-from ragtag_crew.telegram.session_store import (
+from ragtag_crew.session_store import (
     cleanup_expired_sessions,
     list_sessions,
     load_session,
@@ -112,9 +112,7 @@ class SessionStoreTests(unittest.TestCase):
                     json.dumps({"last_active_at": 1}),
                     encoding="utf-8",
                 )
-                with patch(
-                    "ragtag_crew.telegram.session_store.time.time", return_value=10_000
-                ):
+                with patch("ragtag_crew.session_store.time.time", return_value=10_000):
                     cleanup_expired_sessions()
 
                 self.assertFalse(path.exists())

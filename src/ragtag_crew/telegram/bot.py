@@ -38,10 +38,11 @@ from ragtag_crew.memory_store import (
     search_memory,
 )
 from ragtag_crew.model_validation import validate_model
+from ragtag_crew.prompts import DEFAULT_SYSTEM_PROMPT
 from ragtag_crew.skill_loader import get_skill, list_skills
 from ragtag_crew.telegram.stream import TelegramStreamer
 from ragtag_crew.trace import TraceCollector
-from ragtag_crew.telegram.session_store import (
+from ragtag_crew.session_store import (
     cleanup_expired_sessions,
     delete_session,
     load_session,
@@ -54,43 +55,17 @@ log = logging.getLogger(__name__)
 # Session routing: chat_id -> AgentSession
 _sessions: dict[int, AgentSession] = {}
 
-# Default system prompt
-_SYSTEM_PROMPT = (
-    "You are a concise, efficient coding assistant.  "
-    "Follow these rules strictly:\n"
-    "\n"
-    "1. **Use built-in tools first**: prefer `read`, `write`, `edit`, `delete_file`, `grep`, `find`, `ls` over `bash`. "
-    "These tools are faster, safer, and produce cleaner output.\n"
-    "2. **`grep`** for content search, **`find`** for file name search, **`ls`** for directory listing. "
-    "Do NOT use `bash` with `grep`/`find`/`ls` commands for these tasks.\n"
-    "3. **`bash`** is only for operations that built-in tools cannot do: "
-    "installing packages, running scripts, git operations, system commands, etc. "
-    "Do NOT use `bash` to delete files — use `delete_file` instead.\n"
-    "4. **Narrate intent, not process**: before each significant action, state what you are about to do in one short line "
-    '(e.g. "Fixing the null-check in config.py" or "Writing the data loader"). '
-    "After completing a non-trivial action, briefly state the outcome if it is not obvious. "
-    'Do NOT use hollow filler phrases ("Sure!", "Of course!", "I\'ll help you with...") '
-    "and do NOT repeat back what the user just said.\n"
-    "5. **Progress updates**: for multi-step tasks, briefly report each completed major step before moving to the next "
-    '(e.g. "Done: requirements.txt. Now writing data_io.py..."). '
-    "When you receive a progress question, answer with done / in-progress / next before resuming normal work.\n"
-    "6. **Windows environment**: you are running on Windows. "
-    "Use forward slashes or backslashes for paths. "
-    "For paths outside the working directory, use `bash` with native Windows commands.\n"
-    "7. **Batch operations**: make multiple independent tool calls in a single turn when possible."
-)
-
 
 def _get_session(chat_id: int) -> AgentSession:
     if chat_id not in _sessions:
-        restored = load_session(chat_id, default_system_prompt=_SYSTEM_PROMPT)
+        restored = load_session(chat_id, default_system_prompt=DEFAULT_SYSTEM_PROMPT)
         if restored is not None:
             _sessions[chat_id] = restored
         else:
             _sessions[chat_id] = AgentSession(
                 model=settings.default_model,
                 tools=get_tools_for_preset(settings.default_tool_preset),
-                system_prompt=_SYSTEM_PROMPT,
+                system_prompt=DEFAULT_SYSTEM_PROMPT,
                 tool_preset=settings.default_tool_preset,
                 enabled_skills=[],
                 browser_mode=settings.browser_mode_default,

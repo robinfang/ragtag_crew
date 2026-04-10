@@ -19,19 +19,27 @@ class FakeReplSession:
         system_prompt: str = "",
         tool_preset: str = "coding",
         enabled_skills: list[str] | None = None,
+        planning_enabled: bool | None = None,
     ) -> None:
         self.model = model
         self.tools = tools
         self.system_prompt = system_prompt
         self.tool_preset = tool_preset
         self.enabled_skills = list(enabled_skills or [])
+        self.planning_enabled = (
+            planning_enabled if planning_enabled is not None else True
+        )
         self.is_busy = False
         self.prompt_calls: list[str] = []
-        self._callback = None
+        self._callbacks: list[object] = []
         FakeReplSession.last_instance = self
 
     def subscribe(self, cb) -> None:  # type: ignore[no-untyped-def]
-        self._callback = cb
+        self._callbacks.append(cb)
+
+    def unsubscribe(self, cb) -> None:  # type: ignore[no-untyped-def]
+        if cb in self._callbacks:
+            self._callbacks.remove(cb)
 
     def reset(self) -> None:
         self.prompt_calls.clear()
@@ -41,13 +49,14 @@ class FakeReplSession:
 
     async def prompt(self, text: str) -> str:
         self.prompt_calls.append(text)
-        if self._callback is not None:
-            await self._callback(
+        for cb in self._callbacks:
+            await cb(
                 "tool_execution_start",
                 tool_call=SimpleNamespace(name="read", arguments={"path": "README.md"}),
             )
-            await self._callback("message_update", delta="partial")
-            await self._callback("message_end", content="answer")
+            await cb("message_update", delta="answer")
+            await cb("message_end", content="answer")
+            await cb("agent_end")
         return "answer"
 
 
@@ -247,6 +256,10 @@ class MainReplTests(unittest.IsolatedAsyncioTestCase):
                 return_value=[SimpleNamespace(name="read")],
             ),
             patch("ragtag_crew.agent.AgentSession", FakeReplSession),
+            patch("ragtag_crew.session_store.load_session", return_value=None),
+            patch("ragtag_crew.session_store.save_session"),
+            patch("ragtag_crew.session_store.delete_session"),
+            patch("ragtag_crew.trace.TraceCollector"),
             patch("builtins.input", side_effect=["hello", "/quit"]),
             redirect_stdout(stdout),
         ):
@@ -256,6 +269,29 @@ class MainReplTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("⏳ read(path=README.md)", out)
         self.assertIn("answer", out)
         self.assertEqual(FakeReplSession.last_instance.prompt_calls, ["hello"])
+
+    async def test_repl_loop_restores_saved_session(self) -> None:
+        stdout = io.StringIO()
+        FakeReplSession.last_instance = None
+        fake_session = FakeReplSession(
+            model="openai/gpt-4",
+            tools=[SimpleNamespace(name="read")],
+            system_prompt="sys",
+            tool_preset="readonly",
+        )
+        with (
+            patch("ragtag_crew.external.ensure_external_capabilities_initialized"),
+            patch("ragtag_crew.session_store.load_session", return_value=fake_session),
+            patch("ragtag_crew.session_store.save_session"),
+            patch("ragtag_crew.trace.TraceCollector"),
+            patch("builtins.input", side_effect=["/quit"]),
+            redirect_stdout(stdout),
+        ):
+            await main_module._repl_loop()
+
+        out = stdout.getvalue()
+        self.assertIn("session restored", out)
+        self.assertIn("openai/gpt-4", out)
 
     async def test_repl_loop_lists_skills_without_calling_prompt(self) -> None:
         stdout = io.StringIO()
@@ -267,6 +303,9 @@ class MainReplTests(unittest.IsolatedAsyncioTestCase):
                 return_value=[SimpleNamespace(name="read")],
             ),
             patch("ragtag_crew.agent.AgentSession", FakeReplSession),
+            patch("ragtag_crew.session_store.load_session", return_value=None),
+            patch("ragtag_crew.session_store.save_session"),
+            patch("ragtag_crew.session_store.delete_session"),
             patch.object(
                 main_module,
                 "list_skills",
@@ -295,6 +334,9 @@ class MainReplTests(unittest.IsolatedAsyncioTestCase):
                 return_value=[SimpleNamespace(name="read")],
             ),
             patch("ragtag_crew.agent.AgentSession", FakeReplSession),
+            patch("ragtag_crew.session_store.load_session", return_value=None),
+            patch("ragtag_crew.session_store.save_session"),
+            patch("ragtag_crew.session_store.delete_session"),
             patch.object(
                 main_module, "get_skill", return_value=SimpleNamespace(name="review")
             ),
@@ -311,6 +353,54 @@ class MainReplTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Cleared all active skills.", out)
         self.assertEqual(FakeReplSession.last_instance.enabled_skills, [])
         self.assertEqual(FakeReplSession.last_instance.prompt_calls, [])
+
+    async def test_repl_loop_plan_toggle(self) -> None:
+        stdout = io.StringIO()
+        FakeReplSession.last_instance = None
+        with (
+            patch("ragtag_crew.external.ensure_external_capabilities_initialized"),
+            patch(
+                "ragtag_crew.tools.get_tools_for_preset",
+                return_value=[SimpleNamespace(name="read")],
+            ),
+            patch("ragtag_crew.agent.AgentSession", FakeReplSession),
+            patch("ragtag_crew.session_store.load_session", return_value=None),
+            patch("ragtag_crew.session_store.save_session"),
+            patch(
+                "builtins.input",
+                side_effect=["/plan", "/plan off", "/plan", "/quit"],
+            ),
+            redirect_stdout(stdout),
+        ):
+            await main_module._repl_loop()
+
+        out = stdout.getvalue()
+        self.assertIn("Current mode: Plan", out)
+        self.assertIn("Build mode ON", out)
+        self.assertIn("Current mode: Build", out)
+        self.assertFalse(FakeReplSession.last_instance.planning_enabled)
+
+    async def test_repl_new_clears_session_and_deletes_store(self) -> None:
+        stdout = io.StringIO()
+        FakeReplSession.last_instance = None
+        with (
+            patch("ragtag_crew.external.ensure_external_capabilities_initialized"),
+            patch(
+                "ragtag_crew.tools.get_tools_for_preset",
+                return_value=[SimpleNamespace(name="read")],
+            ),
+            patch("ragtag_crew.agent.AgentSession", FakeReplSession),
+            patch("ragtag_crew.session_store.load_session", return_value=None),
+            patch("ragtag_crew.session_store.save_session") as mock_save,
+            patch("ragtag_crew.session_store.delete_session") as mock_delete,
+            patch("builtins.input", side_effect=["/new", "/quit"]),
+            redirect_stdout(stdout),
+        ):
+            await main_module._repl_loop()
+
+        out = stdout.getvalue()
+        self.assertIn("Session cleared.", out)
+        mock_delete.assert_called_once_with(0)
 
 
 if __name__ == "__main__":

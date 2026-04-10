@@ -142,7 +142,7 @@ def _check_config() -> None:
 
 
 def _show_history_list() -> None:
-    from ragtag_crew.telegram.session_store import (
+    from ragtag_crew.session_store import (
         cleanup_expired_sessions,
         list_sessions,
     )
@@ -162,7 +162,7 @@ def _show_history_list() -> None:
 
 
 def _show_history(chat_id: int) -> None:
-    from ragtag_crew.telegram.session_store import (
+    from ragtag_crew.session_store import (
         cleanup_expired_sessions,
         read_session_payload,
     )
@@ -247,34 +247,58 @@ async def _repl_loop() -> None:
     from ragtag_crew.agent import AgentSession
     from ragtag_crew.errors import UserAbortedError
     from ragtag_crew.external import ensure_external_capabilities_initialized
+    from ragtag_crew.session_store import (
+        delete_session as _delete_session,
+        load_session as _load_session,
+        save_session as _save_session,
+    )
     from ragtag_crew.tools import get_tools_for_preset
+    from ragtag_crew.trace import TraceCollector
 
     ensure_external_capabilities_initialized()
 
-    session = AgentSession(
-        model=settings.default_model,
-        tools=get_tools_for_preset(settings.default_tool_preset),
-        system_prompt="You are a concise coding assistant. Be brief.",
-        tool_preset=settings.default_tool_preset,
+    from ragtag_crew.prompts import DEFAULT_SYSTEM_PROMPT
+    from ragtag_crew.repl_streamer import ReplStreamer
+
+    _REPL_CHAT_ID = 0
+
+    restored = _load_session(_REPL_CHAT_ID, default_system_prompt=DEFAULT_SYSTEM_PROMPT)
+    if restored is not None:
+        session = restored
+        print(
+            f"ragtag-crew REPL  (session restored)  model={session.model}  tools={session.tool_preset}"
+        )
+    else:
+        session = AgentSession(
+            model=settings.default_model,
+            tools=get_tools_for_preset(settings.default_tool_preset),
+            system_prompt=DEFAULT_SYSTEM_PROMPT,
+            tool_preset=settings.default_tool_preset,
+        )
+        print(f"ragtag-crew REPL  model={session.model}  tools={session.tool_preset}")
+
+    streamer = ReplStreamer()
+    session.subscribe(streamer.on_event)
+
+    print("输入消息对话，/help 查看命令，Ctrl+C 取消当前回复，/quit 退出\n")
+
+    _REPL_HELP = (
+        "REPL 命令：\n"
+        "  /new              清空当前会话\n"
+        "  /model            查看当前模型\n"
+        "  /model <name>     切换模型\n"
+        "  /tools            查看当前工具预设\n"
+        "  /plan             查看规划模式状态\n"
+        "  /plan on|off      开关规划模式\n"
+        "  /skills           列出可用技能\n"
+        "  /skill use <name> 启用技能\n"
+        "  /skill drop <name>禁用技能\n"
+        "  /skill clear      清空已启用技能\n"
+        "  /cancel           取消当前回复\n"
+        "  /help             显示此帮助\n"
+        "  /quit             退出 REPL\n"
+        "  Ctrl+C            取消当前回复（等效 /cancel）"
     )
-
-    async def _on_event(event_type: str, **kwargs) -> None:
-        if event_type == "tool_execution_start":
-            tc = kwargs["tool_call"]
-            args_str = ", ".join(f"{k}={v}" for k, v in tc.arguments.items())
-            print(f"\n⏳ {tc.name}({args_str})")
-        elif event_type == "tool_execution_end":
-            pass
-        elif event_type == "cancelled":
-            print("\n⚠️ 已取消")
-        elif event_type == "error":
-            print(f"\n❌ {kwargs.get('error', 'Unknown error')}")
-
-    session.subscribe(_on_event)
-
-    print(f"ragtag-crew REPL  model={session.model}  tools={session.tool_preset}")
-    print("输入消息对话，Ctrl+C 取消当前回复，/quit 退出")
-    print("REPL 命令：/new /model [/name] /tools /skills /skill ... /cancel\n")
 
     while True:
         try:
@@ -289,8 +313,13 @@ async def _repl_loop() -> None:
         if text == "/quit":
             break
 
+        if text == "/help":
+            print(_REPL_HELP)
+            continue
+
         if text == "/new":
             session.reset()
+            _delete_session(_REPL_CHAT_ID)
             print("Session cleared.")
             continue
 
@@ -309,6 +338,26 @@ async def _repl_loop() -> None:
 
         if text == "/tools":
             print(f"Active tools: {', '.join(t.name for t in session.tools)}")
+            continue
+
+        if text == "/plan":
+            status = "ON" if session.planning_enabled else "OFF"
+            mode = "Plan" if session.planning_enabled else "Build"
+            print(f"Current mode: {mode}\nPlanning: {status}")
+            continue
+
+        if text.startswith("/plan "):
+            action = text[6:].strip().lower()
+            if action == "on":
+                session.planning_enabled = True
+                _save_session(_REPL_CHAT_ID, session)
+                print("Plan mode ON — 输出编号计划后再执行。")
+            elif action == "off":
+                session.planning_enabled = False
+                _save_session(_REPL_CHAT_ID, session)
+                print("Build mode ON — 直接执行，不输出计划。")
+            else:
+                print("Usage: /plan on | /plan off")
             continue
 
         if text == "/skills":
@@ -381,14 +430,30 @@ async def _repl_loop() -> None:
             print("(busy, use /cancel to abort)")
             continue
 
+        collector = TraceCollector(chat_id=_REPL_CHAT_ID)
+        collector.set_context(
+            model=session.model,
+            user_input=text,
+            tool_preset=session.tool_preset,
+            enabled_skills=session.enabled_skills,
+            planning_enabled=session.planning_enabled,
+        )
+        session.subscribe(collector.on_event)
+
         try:
             result = await session.prompt(text)
-            if result:
+            if result and not streamer.buffer.strip():
                 print(f"\n{result}\n")
+            streamer.buffer = ""
         except UserAbortedError:
-            pass
+            streamer.buffer = ""
         except Exception as exc:
             print(f"\n❌ {exc}\n")
+            streamer.buffer = ""
+        finally:
+            collector.finalize()
+            session.unsubscribe(collector.on_event)
+            _save_session(_REPL_CHAT_ID, session)
 
     print("Bye.")
 
