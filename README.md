@@ -25,7 +25,7 @@
 - Telegram 表格渲染已做基础适配：Markdown 风格表格会自动转成等宽代码块，避免消息中表格错位
 - 完善的命令级日志记录：状态变更 INFO、权限/失败 WARNING、只读查询 DEBUG
 - 已支持 LLM 超时、整轮超时和 JSON 会话持久化
-- 已支持本地 Markdown skill 的会话级启用，并改为“名称 + 摘要 + 路径”的轻量注入；完整内容按需读取
+- 已支持仓库内本地 Markdown skill 的会话级启用，并改为“名称 + 摘要 + 路径”的轻量注入；完整内容按需读取
 - 已接入 `PROJECT.md` / `USER.local.md` / `MEMORY.md` 分层上下文
 - 已支持 `/prompt` 会话级临时规则，以及独立的 Protected Content 注入层，用于放置不应被普通会话压缩影响的规则
 - 已新增 `Workspace Snapshot` 环境引导：自动注入受控目录树和关键配置文件摘要，降低冷启动探索成本
@@ -59,7 +59,7 @@ uv run python -m ragtag_crew.main
 
 可选：
 
-- 在仓库根目录创建 `skills/*.md`，再通过 `/skills` 和 `/skill use <name>` 启用
+- 在仓库根目录创建或更新 `skills/<name>.md`，这就是本地 skill 的“部署”；再通过 `/skills` 和 `/skill use <name>` 启用
 - 编辑 `PROJECT.md`、`MEMORY.md` 和本地私有的 `USER.local.md` 来调节长期上下文
 - 用 `/memory add <note>` 快速把一条长期信息记到 `memory/inbox.md`
 - 用 `/memory search <query>` 在 `MEMORY.md` 和 `memory/*.md` 中按需检索历史记忆
@@ -75,6 +75,13 @@ uv run python -m ragtag_crew.main
 - 安装 `agent-browser` 并启用 `AGENT_BROWSER_*` / `BROWSER_*` 配置后，可通过 `/browser` 和 `/ext` 管理浏览器能力
 - 如需限制浏览器能力范围，可配置 `BROWSER_ALLOWED_DOMAINS`；attached 模式默认要求先执行 `/browser confirm-attached`
 - 当前浏览器接管支持两条路径：`BROWSER_ATTACHED_CDP_URL`（手动 CDP，较稳）和 `BROWSER_ATTACHED_AUTO_CONNECT=true`（自动发现，较省事）
+
+## Skill 说明
+
+- 当前只支持仓库内 `skills/` 目录下的本地 Markdown skill，不支持 `/skill install` 一类安装/注册流程
+- agent 启用 skill 后，system prompt 只注入 skill 的名称、摘要和文件路径，不会把全文直接塞进 prompt
+- skill 摘要来自该 Markdown 文件里第一条非空、非标题行；`/skills` 展示的就是这条摘要
+- 如果模型需要完整说明，应通过 `read` 工具读取对应的 `skills/<name>.md`
 
 ## 目录结构
 

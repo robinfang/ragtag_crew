@@ -13,6 +13,7 @@ from importlib.metadata import version
 from pathlib import Path
 
 from ragtag_crew.config import settings
+from ragtag_crew.skill_loader import get_skill, list_skills
 
 _LOG_FORMAT = "%(asctime)s %(levelname)-8s %(name)s  %(message)s"
 
@@ -257,7 +258,7 @@ async def _repl_loop() -> None:
         tool_preset=settings.default_tool_preset,
     )
 
-    def _on_event(event_type: str, **kwargs) -> None:
+    async def _on_event(event_type: str, **kwargs) -> None:
         if event_type == "tool_execution_start":
             tc = kwargs["tool_call"]
             args_str = ", ".join(f"{k}={v}" for k, v in tc.arguments.items())
@@ -269,11 +270,11 @@ async def _repl_loop() -> None:
         elif event_type == "error":
             print(f"\n❌ {kwargs.get('error', 'Unknown error')}")
 
-    loop = asyncio.get_running_loop()
-    session.subscribe(lambda *a, **kw: loop.create_task(_on_event(*a, **kw)))
+    session.subscribe(_on_event)
 
     print(f"ragtag-crew REPL  model={session.model}  tools={session.tool_preset}")
-    print("输入消息对话，Ctrl+C 取消当前回复，/quit 退出\n")
+    print("输入消息对话，Ctrl+C 取消当前回复，/quit 退出")
+    print("REPL 命令：/new /model [/name] /tools /skills /skill ... /cancel\n")
 
     while True:
         try:
@@ -308,6 +309,72 @@ async def _repl_loop() -> None:
 
         if text == "/tools":
             print(f"Active tools: {', '.join(t.name for t in session.tools)}")
+            continue
+
+        if text == "/skills":
+            available = list_skills()
+            active = (
+                ", ".join(session.enabled_skills)
+                if session.enabled_skills
+                else "(none)"
+            )
+            if not available:
+                print(
+                    f"Active skills: {active}\nNo local skills found in {settings.skills_dir}"
+                )
+                continue
+
+            print(f"Active skills: {active}\n\nAvailable skills:")
+            for skill in available:
+                summary = f" - {skill.summary}" if skill.summary else ""
+                print(f"- {skill.name}{summary}")
+            continue
+
+        if text.startswith("/skill"):
+            args = text.split()
+            active = (
+                ", ".join(session.enabled_skills)
+                if session.enabled_skills
+                else "(none)"
+            )
+            if len(args) == 1:
+                print(
+                    "Usage: /skill use <name> | /skill drop <name> | /skill clear\n"
+                    f"Active skills: {active}"
+                )
+                continue
+
+            action = args[1].lower()
+            if action == "clear":
+                session.enabled_skills = []
+                print("Cleared all active skills.")
+                continue
+
+            if len(args) < 3:
+                print("Usage: /skill use <name> | /skill drop <name>")
+                continue
+
+            skill_name = args[2]
+            try:
+                skill = get_skill(skill_name)
+            except KeyError:
+                print(f"Unknown skill: {skill_name}")
+                continue
+
+            if action == "use":
+                if skill.name not in session.enabled_skills:
+                    session.enabled_skills.append(skill.name)
+                print(f"Enabled skill: {skill.name}")
+                continue
+
+            if action == "drop":
+                session.enabled_skills = [
+                    name for name in session.enabled_skills if name != skill.name
+                ]
+                print(f"Disabled skill: {skill.name}")
+                continue
+
+            print("Usage: /skill use <name> | /skill drop <name> | /skill clear")
             continue
 
         if session.is_busy:

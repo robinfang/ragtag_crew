@@ -3,9 +3,52 @@ from __future__ import annotations
 import io
 import unittest
 from contextlib import redirect_stdout
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from ragtag_crew import main as main_module
+
+
+class FakeReplSession:
+    last_instance: "FakeReplSession | None" = None
+
+    def __init__(
+        self,
+        model: str,
+        tools: list[object],
+        system_prompt: str = "",
+        tool_preset: str = "coding",
+        enabled_skills: list[str] | None = None,
+    ) -> None:
+        self.model = model
+        self.tools = tools
+        self.system_prompt = system_prompt
+        self.tool_preset = tool_preset
+        self.enabled_skills = list(enabled_skills or [])
+        self.is_busy = False
+        self.prompt_calls: list[str] = []
+        self._callback = None
+        FakeReplSession.last_instance = self
+
+    def subscribe(self, cb) -> None:  # type: ignore[no-untyped-def]
+        self._callback = cb
+
+    def reset(self) -> None:
+        self.prompt_calls.clear()
+
+    def abort(self) -> None:
+        self.is_busy = False
+
+    async def prompt(self, text: str) -> str:
+        self.prompt_calls.append(text)
+        if self._callback is not None:
+            await self._callback(
+                "tool_execution_start",
+                tool_call=SimpleNamespace(name="read", arguments={"path": "README.md"}),
+            )
+            await self._callback("message_update", delta="partial")
+            await self._callback("message_end", content="answer")
+        return "answer"
 
 
 class MainCliTests(unittest.TestCase):
@@ -191,6 +234,83 @@ class MainCliTests(unittest.TestCase):
         out = stdout.getvalue()
         self.assertIn("Session 123", out)
         self.assertIn("session_summary: hi", out)
+
+
+class MainReplTests(unittest.IsolatedAsyncioTestCase):
+    async def test_repl_loop_handles_events_with_async_callback(self) -> None:
+        stdout = io.StringIO()
+        FakeReplSession.last_instance = None
+        with (
+            patch("ragtag_crew.external.ensure_external_capabilities_initialized"),
+            patch(
+                "ragtag_crew.tools.get_tools_for_preset",
+                return_value=[SimpleNamespace(name="read")],
+            ),
+            patch("ragtag_crew.agent.AgentSession", FakeReplSession),
+            patch("builtins.input", side_effect=["hello", "/quit"]),
+            redirect_stdout(stdout),
+        ):
+            await main_module._repl_loop()
+
+        out = stdout.getvalue()
+        self.assertIn("⏳ read(path=README.md)", out)
+        self.assertIn("answer", out)
+        self.assertEqual(FakeReplSession.last_instance.prompt_calls, ["hello"])
+
+    async def test_repl_loop_lists_skills_without_calling_prompt(self) -> None:
+        stdout = io.StringIO()
+        FakeReplSession.last_instance = None
+        with (
+            patch("ragtag_crew.external.ensure_external_capabilities_initialized"),
+            patch(
+                "ragtag_crew.tools.get_tools_for_preset",
+                return_value=[SimpleNamespace(name="read")],
+            ),
+            patch("ragtag_crew.agent.AgentSession", FakeReplSession),
+            patch.object(
+                main_module,
+                "list_skills",
+                return_value=[
+                    SimpleNamespace(name="review", summary="Focus on risks first.")
+                ],
+            ),
+            patch("builtins.input", side_effect=["/skills", "/quit"]),
+            redirect_stdout(stdout),
+        ):
+            await main_module._repl_loop()
+
+        out = stdout.getvalue()
+        self.assertIn("Active skills: (none)", out)
+        self.assertIn("Available skills:", out)
+        self.assertIn("- review - Focus on risks first.", out)
+        self.assertEqual(FakeReplSession.last_instance.prompt_calls, [])
+
+    async def test_repl_loop_supports_skill_use_and_clear(self) -> None:
+        stdout = io.StringIO()
+        FakeReplSession.last_instance = None
+        with (
+            patch("ragtag_crew.external.ensure_external_capabilities_initialized"),
+            patch(
+                "ragtag_crew.tools.get_tools_for_preset",
+                return_value=[SimpleNamespace(name="read")],
+            ),
+            patch("ragtag_crew.agent.AgentSession", FakeReplSession),
+            patch.object(
+                main_module, "get_skill", return_value=SimpleNamespace(name="review")
+            ),
+            patch(
+                "builtins.input",
+                side_effect=["/skill use review", "/skill clear", "/quit"],
+            ),
+            redirect_stdout(stdout),
+        ):
+            await main_module._repl_loop()
+
+        out = stdout.getvalue()
+        self.assertIn("Enabled skill: review", out)
+        self.assertIn("Cleared all active skills.", out)
+        self.assertEqual(FakeReplSession.last_instance.enabled_skills, [])
+        self.assertEqual(FakeReplSession.last_instance.prompt_calls, [])
 
 
 if __name__ == "__main__":

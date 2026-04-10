@@ -28,6 +28,8 @@
 - `PROJECT.md` / `USER.local.md` / `MEMORY.md` 分层上下文已落地
 - 最小 `session_summary` 与 `/context` 已具备
 - `session_summary` 已完成阶段 A 保真度增强（保留关键工具参数、调用顺序并优先保留新摘要）
+- 历史查询 CLI 已具备，并已与 session TTL 清理规则对齐
+- 最小 `compression_blocks` 已落地，当前与 `session_summary` 并存，后续需要进一步收敛职责
 - 最小 `/memory` 闭环已具备
 - `/cancel` 中断命令已可用（用户取消 vs 超时区分提示）
 - `/cancel` 已补显式确认反馈；忙碌时支持直接查询运行进度
@@ -35,6 +37,8 @@
 - 开发模式（`--dev` 文件监听自动重启 + `--repl` 本地终端交互）
 - 执行轨迹收集（TraceCollector，JSONL 格式）
 - Planning 机制（system prompt 注入规划协议）
+- `/prompt` 与 Protected Content 已具备基础版
+- 两阶段调用（`draft + verify`）已具备基础版，但默认仍关闭
 - 固定 OpenAPI 工具接入（paper-search + paper-collector）
 - 环境引导（Workspace Snapshot / env bootstrap）已落地
 - 外部能力初始化已具备超时保护、日志化、部分成功保留与失败后自动重试
@@ -44,12 +48,13 @@
 
 > **在稳定底座之上，决定下一阶段主线能力的阶段。**
 
-当前新的主线已经很明确：
+当前新的主线已经从“接入更多能力”转向：
 
-- 尽快接入 `MCP` 能力
-- 强化联网搜索能力
-- 后续支持 `OpenAPI` 工具接入
-- 在 Windows 下尽量利用 `Everything` 这类本地能力
+- 把 `draft + verify` 从基础版推进为默认可靠能力
+- 补齐搜索工具链工程化闭环（尤其 `rg` 自动发现/下载与 `fd`）
+- 明确外部结果进入 `session_summary` / `memory` 的规则
+- 补 trace 查询、CI 与更完整的控制面
+- 先收口文档与状态描述，再继续扩展高价值工作流
 
 ## 3. 战略判断
 
@@ -57,14 +62,14 @@
 
 更合理的主线是：
 
-> **先把外部能力层建起来，再让上下文系统承接这些新能力。**
+> **在已完成的外部能力底座之上，优先补可靠性、可验证性、可治理性与可诊断性。**
 
-也就是说，接下来不是“继续围绕本地工具打磨”，而是要把项目升级成：
+也就是说，接下来不是继续追求“再接一个能力点”，而是要把项目升级成：
 
-- 一个有本地工具能力的 Telegram agent
-- 一个能接外部 `MCP` server 的 agent
-- 一个能调用固定 `OpenAPI` 工具的 agent
-- 一个既能联网搜索，也能利用宿主机本地搜索能力的 agent
+- 一个改完能更稳定自检的 Telegram agent
+- 一个能解释外部结果从哪里来、为什么被保留的 agent
+- 一个出现失败时能更快定位问题的 agent
+- 一个文档与实现契约一致、可持续演进的 agent
 
 ## 4. 总体路线
 
@@ -249,12 +254,13 @@
 
 **这时再做更合适的内容：**
 
-- `protected content` 规则
+- 收敛 `compression_blocks` 与 `session_summary` 的职责边界
+- 在现有基础版之上继续增强 `protected content`
 - 更强的 `session_summary`
-- `/prompt`
-- `memory search`
+- 在现有基础版之上继续增强 `/prompt`
+- 在现有基础版之上继续增强 `memory search`
 - 再后续评估 `qmd`
-- 最后再评估 block 化 compression state
+- 最后再评估是否需要更重的 block 化 compression state 方案
 
 **原因：**
 
@@ -313,7 +319,9 @@
 - ✅ 运行时进度追踪与进度查询
 - ✅ `/cancel` 显式确认反馈
 - ✅ Telegram 表格渲染（代码块方案）
-- 待做：两阶段调用、历史查询 CLI
+- ✅ 历史查询 CLI
+- ✅ 两阶段调用（基础版）
+- 待做：trace 查询入口、最小 CI、verify 默认化与技能/外部能力契约补全文档
 
 ### M8：上下文系统高级能力成熟
 
@@ -326,7 +334,7 @@
 - `MCP server`
 - 动态 `OpenAPI spec` 导入平台
 - `qmd` 直接接入主链路
-- block 化 compression state
+- 更重的 block 化 compression state 泛化方案
 - 图片 / 文件输入
 - 多前端抽象
 

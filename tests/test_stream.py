@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 
 from telegram.error import BadRequest
@@ -31,7 +32,33 @@ class FakeMessage:
         return FakeReplyMessage(text)
 
 
+class BlockingMessage(FakeMessage):
+    def __init__(self) -> None:
+        super().__init__()
+        self.release_edit = asyncio.Event()
+
+    async def edit_text(self, text: str, **kwargs):  # type: ignore[no-untyped-def]
+        self.edit_calls.append({"text": text, **kwargs})
+        await self.release_edit.wait()
+        return self
+
+
 class TelegramStreamerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_message_update_does_not_block_on_telegram_edit(self) -> None:
+        message = BlockingMessage()
+        streamer = TelegramStreamer(message)
+
+        await asyncio.wait_for(
+            streamer.on_event("message_update", delta="hello"), timeout=0.05
+        )
+        await asyncio.sleep(0)
+
+        self.assertEqual(streamer.buffer, "hello")
+        self.assertEqual(len(message.edit_calls), 1)
+
+        message.release_edit.set()
+        await streamer.finalize()
+
     async def test_flush_renders_html(self) -> None:
         message = FakeMessage()
         streamer = TelegramStreamer(message)

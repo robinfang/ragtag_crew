@@ -19,7 +19,9 @@ from ragtag_crew.telegram.html import render_telegram_html
 log = logging.getLogger(__name__)
 
 # Telegram limits
-_THROTTLE_SECS = 1.5
+# 单条消息编辑频率过低会让流式输出体感很差；1s 仍在 Telegram
+# 常见限流经验范围内，且配合后台发送可避免反向阻塞 LLM stream。
+_THROTTLE_SECS = 1.0
 _MAX_MSG_LEN = 4096
 _MAX_RENDER_INPUT = 3500
 
@@ -54,18 +56,20 @@ class TelegramStreamer:
         self._last_edit_time: float = 0.0
         self._last_sent_text: str = ""
         self._extra_messages: list[Message] = []
+        self._flush_task: asyncio.Task[None] | None = None
+        self._flush_lock = asyncio.Lock()
 
     async def on_event(self, event_type: str, **kwargs) -> None:
         """Event callback — wired to AgentSession.subscribe()."""
         match event_type:
             case "message_update":
                 self.buffer += kwargs["delta"]
-                await self._maybe_flush()
+                self._maybe_flush()
 
             case "tool_execution_start":
                 tc: ToolCall = kwargs["tool_call"]
                 self.buffer += f"\n⏳ {tc.name}({_summarize_args(tc.arguments)})\n"
-                await self._maybe_flush()
+                self._maybe_flush()
 
             case "tool_execution_end":
                 # Replace the ⏳ with ✅ inline isn't worth the complexity;
@@ -107,28 +111,49 @@ class TelegramStreamer:
 
     # -- internal -----------------------------------------------------------
 
-    async def _maybe_flush(self) -> None:
+    def _maybe_flush(self) -> None:
         now = time.monotonic()
-        if now - self._last_edit_time >= _THROTTLE_SECS:
+        if now - self._last_edit_time < _THROTTLE_SECS:
+            return
+        if self._flush_task and not self._flush_task.done():
+            return
+        self._flush_task = asyncio.create_task(self._flush_in_background())
+
+    async def _flush_in_background(self) -> None:
+        try:
             await self._flush()
+        except Exception:
+            log.exception("background telegram flush failed")
+        finally:
+            current = asyncio.current_task()
+            if self._flush_task is current:
+                self._flush_task = None
 
     async def _flush(self) -> None:
-        rendered, consumed = self._render_window(self.buffer)
-        raw_text = self.buffer[:consumed] if self.buffer else "..."
-        if raw_text == self._last_sent_text:
-            return
+        retry_after: float | None = None
+        while True:
+            if retry_after is not None:
+                await asyncio.sleep(retry_after)
+                retry_after = None
 
-        try:
-            await self._send_text(rendered, raw_text, reply=False)
-            self._last_sent_text = raw_text
-            self._last_edit_time = time.monotonic()
-        except RetryAfter as exc:
-            log.warning("Rate limited, waiting %s seconds", exc.retry_after)
-            await asyncio.sleep(exc.retry_after)
-            await self._flush()  # retry once
-        except BadRequest as exc:
-            if "not modified" not in str(exc).lower():
-                log.warning("edit_text failed: %s", exc)
+            async with self._flush_lock:
+                rendered, consumed = self._render_window(self.buffer)
+                raw_text = self.buffer[:consumed] if self.buffer else "..."
+                if raw_text == self._last_sent_text:
+                    return
+
+                try:
+                    await self._send_text(rendered, raw_text, reply=False)
+                    self._last_sent_text = raw_text
+                    self._last_edit_time = time.monotonic()
+                    return
+                except RetryAfter as exc:
+                    log.warning("Rate limited, waiting %s seconds", exc.retry_after)
+                    retry_after = exc.retry_after
+                except BadRequest as exc:
+                    if "not modified" not in str(exc).lower():
+                        log.warning("edit_text failed: %s", exc)
+                    return
 
     def _render_window(self, raw_text: str) -> tuple[str, int]:
         if not raw_text:
@@ -155,6 +180,9 @@ class TelegramStreamer:
             )
         except BadRequest as exc:
             lowered = str(exc).lower()
-            if "parse entities" not in lowered and "can't parse entities" not in lowered:
+            if (
+                "parse entities" not in lowered
+                and "can't parse entities" not in lowered
+            ):
                 raise
             return await sender(raw_text or "...", disable_web_page_preview=True)
