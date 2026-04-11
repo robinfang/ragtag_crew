@@ -6,7 +6,11 @@ from pathlib import Path
 
 from ragtag_crew.memory_store import search_memory
 from ragtag_crew.tools import Tool, register_tool
-from ragtag_crew.tools.path_utils import resolve_path, resolve_read_path
+from ragtag_crew.tools.path_utils import (
+    get_working_dir,
+    resolve_path,
+    resolve_read_path,
+)
 from ragtag_crew.workspace_manager import (
     is_script_path,
     is_workspace_metadata_path,
@@ -214,14 +218,7 @@ def _is_ambiguous_new_script_path(raw_path: str, resolved: Path) -> bool:
     if resolved.exists() or not is_script_path(raw_path):
         return False
 
-    candidate = Path(raw_path).expanduser()
-    if candidate.is_absolute():
-        return False
-
-    normalized = raw_path.replace("\\", "/")
-    if normalized.startswith("./"):
-        return False
-    return "/" not in normalized
+    return resolved.parent == get_working_dir()
 
 
 delete_file_tool = register_tool(

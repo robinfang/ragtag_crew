@@ -16,9 +16,11 @@
 ## 当前能力
 
 - litellm 统一接入多模型
-- 已实现 `read` / `write` / `edit` / `delete_file` / `bash` / `grep` / `find` / `ls` 八个基础工具
+- 已实现 `read` / `write` / `edit` / `delete_file` / `bash` / `grep` / `find` / `ls` 等基础工具，并补充 `create_workspace` / `list_workspaces` / `delete_workspace` / `cleanup_workspaces` / `write_script` 等工作区管理工具
 - 工具路径沙箱：写操作限制在工作目录内，读操作允许访问任意绝对路径
 - 文件删除保护：bash 拦截 `rm`/`del`/`rmdir` 等删除命令，统一通过 `delete_file` 工具执行
+- 工作目录级 workspace 管理：每个 `working_dir` 下维护独立的 `.ragtag_crew/workspaces/`，默认搜索会隐藏该目录，但可通过专用 workspace 工具稳定复用脚本与临时产物
+- 新脚本根目录保护：新建脚本如果目标位于 `working_dir` 根目录，会被视为歧义路径并拒绝直接 `write`；应明确写入项目子目录，或使用 `write_script` 写入 managed script workspace
 - Telegram 流式输出、HTML 富文本渲染、消息编辑节流、单用户鉴权已接通
 - 已支持运行时进度快照：忙碌时可识别进度询问并返回当前 turn、工具执行数、最近响应预览
 - 已支持 `/cancel` 显式确认反馈，取消与超时在运行时语义上分离
@@ -71,6 +73,7 @@ uv run python -m ragtag_crew.main
 - 可用 `ragtag-crew --history-list` 列出已保存会话，用 `ragtag-crew --history <chat_id>` 查看会话摘要与最近消息
 - 会话忙碌时直接问“进度”“进展”“好了没”等，机器人会返回实时快照
 - 用 `/cancel` 中止当前任务，机器人会立即确认已发送取消信号
+- 如需保存可复用脚本或临时工作区，优先使用 `write_script`、`create_workspace`、`list_workspaces` 等 workspace 工具；普通 `find/grep/ls` 默认不会把 `.ragtag_crew/` 混入项目浏览结果
 - 复制 `mcp_servers.example.json` 为 `mcp_servers.local.json` 后，可通过 `/mcp` 查看 MCP server 状态
 - 复制 `openapi_tools.example.json` 为 `openapi_tools.local.json` 后，可通过 `/ext` 查看固定 OpenAPI provider 状态
 - 配置 `WEB_SEARCH_*` 后，可把 `web_search` 挂到 `coding` / `readonly` 预设中
@@ -102,6 +105,7 @@ ragtag_crew/
 │       ├── repl_streamer.py      # REPL 实时流式输出
 │       ├── trace.py              # 执行轨迹收集
 │       ├── env_bootstrap.py      # 工作区快照与环境引导
+│       ├── workspace_manager.py  # working_dir 级 workspace 元数据与生命周期
 │       ├── telegram/
 │       │   ├── bot.py            # Telegram 接入层
 │       │   ├── html.py           # Telegram HTML 渲染
@@ -118,6 +122,7 @@ ragtag_crew/
 │           ├── file_tools.py     # read / write / edit / delete_file
 │           ├── shell_tools.py    # bash（含删除命令拦截）
 │           ├── search_tools.py   # grep / find / ls
+│           ├── workspace_tools.py # workspace / write_script
 │           └── path_utils.py     # 路径沙箱工具函数
 ├── tests/                        # 测试
 ├── archive/

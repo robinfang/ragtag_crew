@@ -377,15 +377,38 @@ class WorkspaceToolTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("ERROR", result)
             self.assertFalse((root / "foo.py").exists())
 
-    async def test_write_allows_explicit_root_script_path(self) -> None:
+    async def test_write_rejects_explicit_root_script_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
 
             with working_dir(root), workspace_config():
                 result = await file_tools._write_file("./foo.py", "print('x')\n")
 
+            self.assertIn("ERROR", result)
+            self.assertFalse((root / "foo.py").exists())
+
+    async def test_write_rejects_absolute_root_script_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            with working_dir(root), workspace_config():
+                result = await file_tools._write_file(
+                    str(root / "foo.py"),
+                    "print('x')\n",
+                )
+
+            self.assertIn("ERROR", result)
+            self.assertFalse((root / "foo.py").exists())
+
+    async def test_write_allows_explicit_project_subdir_script_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            with working_dir(root), workspace_config():
+                result = await file_tools._write_file("scripts/foo.py", "print('x')\n")
+
             self.assertIn("OK", result)
-            self.assertTrue((root / "foo.py").exists())
+            self.assertTrue((root / "scripts" / "foo.py").exists())
 
     async def test_write_script_creates_reusable_script_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
