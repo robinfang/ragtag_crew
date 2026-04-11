@@ -244,6 +244,44 @@ class MainCliTests(unittest.TestCase):
         self.assertIn("Session 123", out)
         self.assertIn("session_summary: hi", out)
 
+    def test_run_telegram_frontend_stops_on_keyboard_interrupt(self) -> None:
+        app = SimpleNamespace(
+            run_polling=lambda **kwargs: (_ for _ in ()).throw(KeyboardInterrupt())
+        )
+
+        with patch("ragtag_crew.telegram.bot.build_app", return_value=app):
+            rc = main_module._run_telegram_frontend()
+
+        self.assertEqual(rc, 0)
+
+    def test_run_telegram_frontend_restarts_after_unexpected_return(self) -> None:
+        calls: list[dict[str, object]] = []
+
+        def run_once(**kwargs):
+            calls.append(kwargs)
+            return None
+
+        def stop_loop(**kwargs):
+            raise KeyboardInterrupt()
+
+        app1 = SimpleNamespace(run_polling=run_once)
+        app2 = SimpleNamespace(run_polling=stop_loop)
+
+        with (
+            patch("ragtag_crew.telegram.bot.build_app", side_effect=[app1, app2]),
+            patch("ragtag_crew.main.time.sleep") as sleep,
+            patch.object(main_module.settings, "telegram_restart_backoff_min", 2),
+            patch.object(main_module.settings, "telegram_restart_backoff_max", 10),
+            patch.object(main_module.settings, "telegram_health_stale_seconds", 120),
+        ):
+            rc = main_module._run_telegram_frontend()
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            calls, [{"drop_pending_updates": True, "bootstrap_retries": -1}]
+        )
+        sleep.assert_called_once_with(2)
+
 
 class MainReplTests(unittest.IsolatedAsyncioTestCase):
     async def test_repl_loop_handles_events_with_async_callback(self) -> None:

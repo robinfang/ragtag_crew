@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
+from dataclasses import dataclass
 from datetime import datetime
 
 from telegram import BotCommand, Update
+from telegram.error import NetworkError
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -13,6 +17,7 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
+from telegram.request import HTTPXRequest
 
 from ragtag_crew.agent import AgentSession
 from ragtag_crew.config import settings
@@ -54,6 +59,136 @@ log = logging.getLogger(__name__)
 
 # Session routing: chat_id -> AgentSession
 _sessions: dict[int, AgentSession] = {}
+
+
+@dataclass(slots=True)
+class TelegramRuntimeHealth:
+    started_at: float
+    last_poll_success_at: float
+    last_message_activity_at: float
+    last_error_at: float | None = None
+    last_error_repr: str = ""
+    consecutive_poll_failures: int = 0
+
+    @classmethod
+    def create(cls) -> "TelegramRuntimeHealth":
+        now = time.monotonic()
+        return cls(
+            started_at=now,
+            last_poll_success_at=now,
+            last_message_activity_at=now,
+        )
+
+    def mark_poll_success(self) -> None:
+        self.last_poll_success_at = time.monotonic()
+        self.consecutive_poll_failures = 0
+
+    def mark_message_activity(self) -> None:
+        self.last_message_activity_at = time.monotonic()
+
+    def mark_poll_error(self, exc: BaseException) -> None:
+        self.last_error_at = time.monotonic()
+        self.last_error_repr = f"{exc.__class__.__name__}: {exc}"
+        self.consecutive_poll_failures += 1
+
+    def snapshot(self) -> dict[str, float | int | str | None]:
+        return {
+            "poll_stale_secs": round(time.monotonic() - self.last_poll_success_at, 1),
+            "message_idle_secs": round(
+                time.monotonic() - self.last_message_activity_at, 1
+            ),
+            "consecutive_poll_failures": self.consecutive_poll_failures,
+            "last_error": self.last_error_repr or None,
+        }
+
+
+class HealthAwareHTTPXRequest(HTTPXRequest):
+    def __init__(self, *, health: TelegramRuntimeHealth, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._health = health
+
+    async def do_request(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        try:
+            result = await super().do_request(*args, **kwargs)
+        except Exception as exc:
+            self._health.mark_poll_error(exc)
+            raise
+        self._health.mark_poll_success()
+        return result
+
+
+def _build_request_kwargs(*, read_timeout: float) -> dict[str, object]:
+    httpx_kwargs: dict[str, object] = {}
+    if settings.telegram_disable_env_proxy:
+        httpx_kwargs["trust_env"] = False
+
+    return {
+        "connect_timeout": settings.telegram_connect_timeout,
+        "read_timeout": read_timeout,
+        "write_timeout": settings.telegram_write_timeout,
+        "pool_timeout": settings.telegram_pool_timeout,
+        "http_version": "1.1",
+        "proxy": settings.telegram_proxy or None,
+        "httpx_kwargs": httpx_kwargs,
+    }
+
+
+async def _handle_application_error(
+    update: object | None, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    app = getattr(context, "application", None)
+    bot_data = getattr(app, "bot_data", {}) if app is not None else {}
+    health = bot_data.get("telegram_runtime_health")
+    extra = health.snapshot() if isinstance(health, TelegramRuntimeHealth) else {}
+    if isinstance(context.error, NetworkError):
+        log.warning("Telegram network error; runtime=%s", extra, exc_info=context.error)
+        return
+    log.exception(
+        "Unhandled telegram application error; runtime=%s",
+        extra,
+        exc_info=context.error,
+    )
+
+
+async def _monitor_telegram_health(app: Application) -> None:
+    health = app.bot_data.get("telegram_runtime_health")
+    if not isinstance(health, TelegramRuntimeHealth):
+        return
+
+    interval_secs = max(5, min(30, settings.telegram_health_stale_seconds // 4 or 5))
+    while True:
+        await asyncio.sleep(interval_secs)
+        stale_for = time.monotonic() - health.last_poll_success_at
+        if stale_for < settings.telegram_health_stale_seconds:
+            continue
+        if health.consecutive_poll_failures <= 0:
+            continue
+        log.error(
+            "Telegram polling unhealthy for %.1fs; stopping application for supervisor restart. runtime=%s",
+            stale_for,
+            health.snapshot(),
+        )
+        app.stop_running()
+        return
+
+
+async def _post_init(app: Application) -> None:
+    await _register_commands(app)
+    app.bot_data["telegram_health_monitor_task"] = asyncio.create_task(
+        _monitor_telegram_health(app),
+        name="ragtag_crew:telegram_health_monitor",
+    )
+
+
+async def _post_stop(app: Application) -> None:
+    task = app.bot_data.pop("telegram_health_monitor_task", None)
+    if task is None:
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
 
 
 def _get_session(chat_id: int) -> AgentSession:
@@ -862,6 +997,12 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not text:
         return
 
+    app = getattr(context, "application", None)
+    bot_data = getattr(app, "bot_data", {}) if app is not None else {}
+    health = bot_data.get("telegram_runtime_health")
+    if isinstance(health, TelegramRuntimeHealth):
+        health.mark_message_activity()
+
     session = _get_session(chat_id)
     log.debug("[chat %s] prompt: %.80s", chat_id, text)
 
@@ -928,7 +1069,23 @@ def build_app() -> Application:
     cleanup_expired_sessions()
     ensure_external_capabilities_initialized()
 
-    app = Application.builder().token(settings.telegram_bot_token).build()
+    health = TelegramRuntimeHealth.create()
+    request = HTTPXRequest(
+        **_build_request_kwargs(read_timeout=settings.telegram_read_timeout)
+    )
+    get_updates_request = HealthAwareHTTPXRequest(
+        health=health,
+        **_build_request_kwargs(read_timeout=settings.telegram_read_timeout),
+    )
+
+    app = (
+        Application.builder()
+        .token(settings.telegram_bot_token)
+        .request(request)
+        .get_updates_request(get_updates_request)
+        .build()
+    )
+    app.bot_data["telegram_runtime_health"] = health
 
     app.add_handler(CommandHandler("start", _cmd_start))
     app.add_handler(CommandHandler("new", _cmd_new))
@@ -945,7 +1102,9 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("ext", _cmd_ext))
     app.add_handler(CommandHandler("browser", _cmd_browser))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _handle_message))
+    app.add_error_handler(_handle_application_error)
 
-    app.post_init = _register_commands
+    app.post_init = _post_init
+    app.post_stop = _post_stop
 
     return app

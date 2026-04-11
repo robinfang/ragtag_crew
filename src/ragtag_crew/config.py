@@ -7,6 +7,16 @@ class Settings(BaseSettings):
     # Telegram
     telegram_bot_token: str = ""
     allowed_user_ids: str = ""
+    telegram_proxy: str = ""
+    telegram_disable_env_proxy: bool = True
+    telegram_connect_timeout: float = 5.0
+    telegram_read_timeout: float = 20.0
+    telegram_write_timeout: float = 20.0
+    telegram_pool_timeout: float = 5.0
+    telegram_bootstrap_retries: int = -1
+    telegram_restart_backoff_min: int = 2
+    telegram_restart_backoff_max: int = 60
+    telegram_health_stale_seconds: int = 120
 
     # LLM
     default_model: str = "openai/GLM-5.1"

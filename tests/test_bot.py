@@ -1124,17 +1124,33 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_build_app_registers_expected_handlers(self) -> None:
         added_handlers: list[object] = []
+        added_error_handlers: list[object] = []
+        request_instances: list[object] = []
+        get_updates_request_instances: list[object] = []
+
+        app = SimpleNamespace(
+            add_handler=lambda handler: added_handlers.append(handler),
+            add_error_handler=lambda handler: added_error_handlers.append(handler),
+            bot_data={},
+            post_init=None,
+            post_stop=None,
+        )
 
         class FakeBuilder:
             def token(self, value: str) -> "FakeBuilder":
                 self.value = value
                 return self
 
+            def request(self, request: object) -> "FakeBuilder":
+                request_instances.append(request)
+                return self
+
+            def get_updates_request(self, request: object) -> "FakeBuilder":
+                get_updates_request_instances.append(request)
+                return self
+
             def build(self) -> object:
-                return SimpleNamespace(
-                    add_handler=lambda handler: added_handlers.append(handler),
-                    post_init=None,
-                )
+                return app
 
         fake_application = SimpleNamespace(builder=lambda: FakeBuilder())
 
@@ -1144,14 +1160,31 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
                 "ragtag_crew.telegram.bot.ensure_external_capabilities_initialized"
             ) as init_external,
             patch("ragtag_crew.telegram.bot.Application", fake_application),
+            patch(
+                "ragtag_crew.telegram.bot.HTTPXRequest",
+                side_effect=lambda **kwargs: kwargs,
+            ),
+            patch(
+                "ragtag_crew.telegram.bot.HealthAwareHTTPXRequest",
+                side_effect=lambda **kwargs: kwargs,
+            ),
         ):
-            app = bot_module.build_app()
+            built_app = bot_module.build_app()
 
         cleanup.assert_called_once()
         init_external.assert_called_once()
         self.assertEqual(len(added_handlers), 15)
-        self.assertIsNotNone(app)
+        self.assertEqual(len(added_error_handlers), 1)
+        self.assertEqual(len(request_instances), 1)
+        self.assertEqual(len(get_updates_request_instances), 1)
+        self.assertIsNotNone(app.bot_data.get("telegram_runtime_health"))
         self.assertIsNotNone(app.post_init)
+        self.assertIsNotNone(app.post_stop)
+        self.assertFalse(request_instances[0]["httpx_kwargs"].get("trust_env", True))
+        self.assertFalse(
+            get_updates_request_instances[0]["httpx_kwargs"].get("trust_env", True)
+        )
+        self.assertIs(built_app, app)
 
     async def test_register_commands(self) -> None:
         fake_bot = AsyncMock()

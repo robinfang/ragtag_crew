@@ -8,9 +8,12 @@ import logging
 import logging.handlers
 import os
 import sys
+import time
 from collections.abc import Sequence
 from importlib.metadata import version
 from pathlib import Path
+
+from telegram.error import InvalidToken
 
 from ragtag_crew.config import settings
 from ragtag_crew.skill_loader import get_skill, list_skills
@@ -121,6 +124,49 @@ def _setup_logging() -> None:
     )
     file_handler.setFormatter(fmt)
     root.addHandler(file_handler)
+
+
+def _run_telegram_frontend() -> int:
+    from ragtag_crew.telegram.bot import build_app
+
+    log = logging.getLogger(__name__)
+    backoff = max(1, settings.telegram_restart_backoff_min)
+    max_backoff = max(backoff, settings.telegram_restart_backoff_max)
+
+    while True:
+        app = build_app()
+        started_at = time.monotonic()
+        try:
+            log.info("Telegram frontend started; polling...")
+            app.run_polling(
+                drop_pending_updates=True,
+                bootstrap_retries=settings.telegram_bootstrap_retries,
+            )
+            runtime = time.monotonic() - started_at
+            log.warning(
+                "Telegram frontend stopped unexpectedly after %.1fs; restarting in %ss",
+                runtime,
+                backoff,
+            )
+        except KeyboardInterrupt:
+            log.info("Telegram frontend interrupted; shutting down.")
+            return 0
+        except InvalidToken:
+            log.exception("Telegram bot token invalid; aborting startup.")
+            return 1
+        except Exception:
+            runtime = time.monotonic() - started_at
+            log.exception(
+                "Telegram frontend crashed after %.1fs; restarting in %ss",
+                runtime,
+                backoff,
+            )
+
+        time.sleep(backoff)
+        if time.monotonic() - started_at >= settings.telegram_health_stale_seconds:
+            backoff = max(1, settings.telegram_restart_backoff_min)
+        else:
+            backoff = min(max_backoff, backoff * 2)
 
 
 def _check_config() -> None:
@@ -498,7 +544,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     log.info("  tools  = %s", settings.default_tool_preset)
     log.info("  cwd    = %s", settings.working_dir)
 
-    from ragtag_crew.telegram.bot import build_app
     from ragtag_crew.tools.bin_resolver import resolve_binary
 
     try:
@@ -512,10 +557,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if settings.dev_mode:
         _start_file_watcher()
 
-    app = build_app()
-    log.info("Telegram frontend started; polling...")
-    app.run_polling(drop_pending_updates=True)
-    return 0
+    return _run_telegram_frontend()
 
 
 if __name__ == "__main__":
