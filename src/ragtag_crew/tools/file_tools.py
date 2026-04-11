@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from ragtag_crew.memory_store import search_memory
 from ragtag_crew.tools import Tool, register_tool
 from ragtag_crew.tools.path_utils import resolve_path, resolve_read_path
+from ragtag_crew.workspace_manager import (
+    is_script_path,
+    is_workspace_metadata_path,
+    register_workspace_file,
+    touch_workspace_for_path,
+    unregister_workspace_file,
+)
 
 
 # ---- read -----------------------------------------------------------------
@@ -25,6 +34,7 @@ async def _read_file(path: str, offset: int = 1, limit: int = 2000) -> str:
     selected = lines[start : start + limit]
     numbered = "".join(f"{start + i + 1:6d}\t{line}" for i, line in enumerate(selected))
     header = f"({total} lines total)\n" if total > limit else ""
+    touch_workspace_for_path(resolved)
     return header + numbered
 
 
@@ -63,11 +73,20 @@ read_tool = register_tool(
 
 async def _write_file(path: str, content: str) -> str:
     resolved = resolve_path(path)
+    metadata_error = _validate_workspace_metadata_access(resolved)
+    if metadata_error is not None:
+        return metadata_error
+    if _is_ambiguous_new_script_path(path, resolved):
+        return (
+            "ERROR: ambiguous new script target. Either provide an explicit directory "
+            "for the project path or use write_script to store it in the managed script workspace."
+        )
     try:
         resolved.parent.mkdir(parents=True, exist_ok=True)
         resolved.write_text(content, encoding="utf-8")
     except Exception as exc:
         return f"ERROR: {exc}"
+    register_workspace_file(resolved)
     return f"OK: wrote {len(content)} chars to {path}"
 
 
@@ -102,6 +121,9 @@ write_tool = register_tool(
 
 async def _edit_file(path: str, old_string: str, new_string: str) -> str:
     resolved = resolve_path(path)
+    metadata_error = _validate_workspace_metadata_access(resolved)
+    if metadata_error is not None:
+        return metadata_error
     if not resolved.is_file():
         return f"ERROR: file not found: {path}"
     try:
@@ -120,6 +142,7 @@ async def _edit_file(path: str, old_string: str, new_string: str) -> str:
 
     new_content = content.replace(old_string, new_string, 1)
     resolved.write_text(new_content, encoding="utf-8")
+    register_workspace_file(resolved)
     return f"OK: replaced 1 occurrence in {path}"
 
 
@@ -162,18 +185,43 @@ async def _delete_file(path: str) -> str:
         resolved = resolve_path(path)
     except PermissionError as exc:
         return f"ERROR: {exc}"
+    metadata_error = _validate_workspace_metadata_access(resolved)
+    if metadata_error is not None:
+        return metadata_error
     if resolved.is_file():
         resolved.unlink()
+        unregister_workspace_file(resolved)
         return f"OK: deleted {path}"
     if resolved.is_dir():
         try:
             resolved.rmdir()
+            touch_workspace_for_path(resolved)
             return f"OK: deleted directory {path}"
         except OSError as exc:
             if exc.errno in (39, 41):
                 return f"ERROR: directory not empty: {path} (remove contents first)"
             return f"ERROR: {exc}"
     return f"ERROR: not found: {path}"
+
+
+def _validate_workspace_metadata_access(path: Path) -> str | None:
+    if is_workspace_metadata_path(path):
+        return "ERROR: workspace metadata is managed internally; use workspace tools instead"
+    return None
+
+
+def _is_ambiguous_new_script_path(raw_path: str, resolved: Path) -> bool:
+    if resolved.exists() or not is_script_path(raw_path):
+        return False
+
+    candidate = Path(raw_path).expanduser()
+    if candidate.is_absolute():
+        return False
+
+    normalized = raw_path.replace("\\", "/")
+    if normalized.startswith("./"):
+        return False
+    return "/" not in normalized
 
 
 delete_file_tool = register_tool(

@@ -298,13 +298,15 @@ async def _repl_loop() -> None:
         load_session as _load_session,
         save_session as _save_session,
     )
-    from ragtag_crew.tools import get_tools_for_preset
+    from ragtag_crew.tools import ensure_builtin_tools_registered, get_tools_for_preset
     from ragtag_crew.trace import TraceCollector
 
     ensure_external_capabilities_initialized()
 
     from ragtag_crew.prompts import DEFAULT_SYSTEM_PROMPT
     from ragtag_crew.repl_streamer import ReplStreamer
+
+    ensure_builtin_tools_registered()
 
     _REPL_CHAT_ID = 0
 

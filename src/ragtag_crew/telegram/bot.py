@@ -53,7 +53,7 @@ from ragtag_crew.session_store import (
     load_session,
     save_session,
 )
-from ragtag_crew.tools import get_tools_for_preset
+from ragtag_crew.tools import ensure_builtin_tools_registered, get_tools_for_preset
 
 log = logging.getLogger(__name__)
 
@@ -1061,10 +1061,7 @@ async def _register_commands(app: Application) -> None:
 
 def build_app() -> Application:
     """Construct the python-telegram-bot Application."""
-    # Force-import tool modules so they self-register.
-    import ragtag_crew.tools.file_tools  # noqa: F401
-    import ragtag_crew.tools.search_tools  # noqa: F401
-    import ragtag_crew.tools.shell_tools  # noqa: F401
+    ensure_builtin_tools_registered()
 
     cleanup_expired_sessions()
     ensure_external_capabilities_initialized()

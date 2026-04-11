@@ -12,15 +12,40 @@ import re
 import shutil
 from pathlib import Path
 
+from ragtag_crew.config import settings
 from ragtag_crew.tools import Tool, register_tool
 from ragtag_crew.tools.path_utils import display_path, resolve_read_path
+from ragtag_crew.workspace_manager import path_targets_workspace_state
 
 _MAX_OUTPUT = 50_000
-_SKIP_DIRS = {".git", ".venv", "__pycache__", "node_modules"}
+_BASE_SKIP_DIRS = {".git", ".venv", "__pycache__", "node_modules"}
 
 
-def _should_skip(path: Path) -> bool:
-    return any(part in _SKIP_DIRS for part in path.parts)
+def _should_skip(path: Path, *, allow_workspace_state: bool = False) -> bool:
+    skip_dirs = set(_BASE_SKIP_DIRS)
+    workspace_state_dir_name = settings.workspace_state_dir_name.strip()
+    if workspace_state_dir_name and not allow_workspace_state:
+        skip_dirs.add(workspace_state_dir_name)
+    return any(part in skip_dirs for part in path.parts)
+
+
+def _allow_workspace_state(root: Path) -> bool:
+    return path_targets_workspace_state(root)
+
+
+def _extend_rg_command_for_workspace_state(
+    command: list[str], *, allow_workspace_state: bool
+) -> None:
+    workspace_state_dir_name = settings.workspace_state_dir_name.strip().replace(
+        "\\", "/"
+    )
+    if allow_workspace_state:
+        command.append("--hidden")
+        return
+    if not workspace_state_dir_name:
+        return
+    command.extend(["--glob", f"!{workspace_state_dir_name}/**"])
+    command.extend(["--glob", f"!**/{workspace_state_dir_name}/**"])
 
 
 def _truncate(text: str) -> str:
@@ -48,24 +73,49 @@ def _get_rg_path() -> str | None:
     return None
 
 
-async def _grep_search(pattern: str, path: str = ".", include: str = "*", case_insensitive: bool = True) -> str:
+async def _grep_search(
+    pattern: str, path: str = ".", include: str = "*", case_insensitive: bool = True
+) -> str:
     root = resolve_read_path(path)
     if not root.exists():
         return f"ERROR: path not found: {path}"
 
-    rg_result = await _grep_with_rg(pattern=pattern, root=root, include=include, case_insensitive=case_insensitive)
+    allow_workspace_state = _allow_workspace_state(root)
+
+    rg_result = await _grep_with_rg(
+        pattern=pattern,
+        root=root,
+        include=include,
+        case_insensitive=case_insensitive,
+        allow_workspace_state=allow_workspace_state,
+    )
     if rg_result is not None:
         return rg_result
 
-    return await _grep_with_python(pattern=pattern, root=root, include=include, case_insensitive=case_insensitive)
+    return await _grep_with_python(
+        pattern=pattern,
+        root=root,
+        include=include,
+        case_insensitive=case_insensitive,
+        allow_workspace_state=allow_workspace_state,
+    )
 
 
-async def _grep_with_rg(pattern: str, root: Path, include: str, case_insensitive: bool = True) -> str | None:
+async def _grep_with_rg(
+    pattern: str,
+    root: Path,
+    include: str,
+    case_insensitive: bool = True,
+    allow_workspace_state: bool = False,
+) -> str | None:
     rg_path = _get_rg_path()
     if rg_path is None:
         return None
 
     command = [rg_path, "--line-number", "--with-filename"]
+    _extend_rg_command_for_workspace_state(
+        command, allow_workspace_state=allow_workspace_state
+    )
     if case_insensitive:
         command.append("-i")
     if include and include != "*":
@@ -89,14 +139,23 @@ async def _grep_with_rg(pattern: str, root: Path, include: str, case_insensitive
         return f"ERROR: ripgrep timed out after 30s."
 
     if proc.returncode not in (0, 1):
-        error = stderr.decode(errors="replace").strip() or f"rg exited with code {proc.returncode}"
+        error = (
+            stderr.decode(errors="replace").strip()
+            or f"rg exited with code {proc.returncode}"
+        )
         return f"ERROR: {error}"
 
     output = stdout.decode(errors="replace").strip()
     return _truncate(output) if output else "No matches found."
 
 
-async def _grep_with_python(pattern: str, root: Path, include: str, case_insensitive: bool = True) -> str:
+async def _grep_with_python(
+    pattern: str,
+    root: Path,
+    include: str,
+    case_insensitive: bool = True,
+    allow_workspace_state: bool = False,
+) -> str:
     try:
         regex = re.compile(pattern, re.IGNORECASE if case_insensitive else 0)
     except re.error as exc:
@@ -106,11 +165,13 @@ async def _grep_with_python(pattern: str, root: Path, include: str, case_insensi
     matches: list[str] = []
 
     for file_path in files:
-        if _should_skip(file_path):
+        if _should_skip(file_path, allow_workspace_state=allow_workspace_state):
             continue
         if include and include != "*":
             rel = display_path(file_path)
-            if not fnmatch.fnmatch(file_path.name, include) and not fnmatch.fnmatch(rel, include):
+            if not fnmatch.fnmatch(file_path.name, include) and not fnmatch.fnmatch(
+                rel, include
+            ):
                 continue
         try:
             lines = file_path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -130,19 +191,36 @@ async def _find_files(pattern: str = "*", path: str = ".") -> str:
     if not root.exists():
         return f"ERROR: path not found: {path}"
 
-    rg_result = await _find_with_rg(pattern=pattern, root=root)
+    allow_workspace_state = _allow_workspace_state(root)
+
+    rg_result = await _find_with_rg(
+        pattern=pattern,
+        root=root,
+        allow_workspace_state=allow_workspace_state,
+    )
     if rg_result is not None:
         return rg_result
 
-    return await _find_with_python(pattern=pattern, root=root)
+    return await _find_with_python(
+        pattern=pattern,
+        root=root,
+        allow_workspace_state=allow_workspace_state,
+    )
 
 
-async def _find_with_rg(pattern: str, root: Path) -> str | None:
+async def _find_with_rg(
+    pattern: str,
+    root: Path,
+    allow_workspace_state: bool = False,
+) -> str | None:
     rg_path = _get_rg_path()
     if rg_path is None:
         return None
 
     command = [rg_path, "--files", "--sort", "path"]
+    _extend_rg_command_for_workspace_state(
+        command, allow_workspace_state=allow_workspace_state
+    )
     if pattern and pattern != "*":
         command.extend(["--glob", pattern])
     command.append(str(root))
@@ -164,7 +242,10 @@ async def _find_with_rg(pattern: str, root: Path) -> str | None:
         return f"ERROR: ripgrep timed out after 30s."
 
     if proc.returncode not in (0, 1):
-        error = stderr.decode(errors="replace").strip() or f"rg exited with code {proc.returncode}"
+        error = (
+            stderr.decode(errors="replace").strip()
+            or f"rg exited with code {proc.returncode}"
+        )
         return f"ERROR: {error}"
 
     output = stdout.decode(errors="replace").strip()
@@ -182,14 +263,22 @@ async def _find_with_rg(pattern: str, root: Path) -> str | None:
     return _truncate("\n".join(lines))
 
 
-async def _find_with_python(pattern: str, root: Path) -> str:
+async def _find_with_python(
+    pattern: str,
+    root: Path,
+    allow_workspace_state: bool = False,
+) -> str:
     if root.is_file():
-        matched = fnmatch.fnmatch(root.name, pattern) or fnmatch.fnmatch(display_path(root), pattern)
+        if _should_skip(root, allow_workspace_state=allow_workspace_state):
+            return "No files found."
+        matched = fnmatch.fnmatch(root.name, pattern) or fnmatch.fnmatch(
+            display_path(root), pattern
+        )
         return display_path(root) if matched else "No files found."
 
     matches: list[str] = []
     for file_path in root.rglob(pattern):
-        if _should_skip(file_path):
+        if _should_skip(file_path, allow_workspace_state=allow_workspace_state):
             continue
         matches.append(display_path(file_path))
 
@@ -202,12 +291,16 @@ async def _list_dir(path: str = ".") -> str:
     if not target.exists():
         return f"ERROR: path not found: {path}"
 
+    allow_workspace_state = _allow_workspace_state(target)
+
     if target.is_file():
         return display_path(target)
 
     entries: list[str] = []
-    for child in sorted(target.iterdir(), key=lambda item: (item.is_file(), item.name.lower())):
-        if _should_skip(child):
+    for child in sorted(
+        target.iterdir(), key=lambda item: (item.is_file(), item.name.lower())
+    ):
+        if _should_skip(child, allow_workspace_state=allow_workspace_state):
             continue
         name = child.name + ("/" if child.is_dir() else "")
         entries.append(name)
@@ -226,10 +319,25 @@ grep_tool = register_tool(
         parameters={
             "type": "object",
             "properties": {
-                "pattern": {"type": "string", "description": "Regex pattern to search for"},
-                "path": {"type": "string", "description": "Directory or file path (relative to working dir or absolute)", "default": "."},
-                "include": {"type": "string", "description": "File filter, e.g. *.py, *.{ts,tsx}", "default": "*"},
-                "case_insensitive": {"type": "boolean", "description": "Case-insensitive search (-i flag)", "default": True},
+                "pattern": {
+                    "type": "string",
+                    "description": "Regex pattern to search for",
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Directory or file path (relative to working dir or absolute)",
+                    "default": ".",
+                },
+                "include": {
+                    "type": "string",
+                    "description": "File filter, e.g. *.py, *.{ts,tsx}",
+                    "default": "*",
+                },
+                "case_insensitive": {
+                    "type": "boolean",
+                    "description": "Case-insensitive search (-i flag)",
+                    "default": True,
+                },
             },
             "required": ["pattern"],
         },
@@ -249,8 +357,16 @@ find_tool = register_tool(
         parameters={
             "type": "object",
             "properties": {
-                "pattern": {"type": "string", "description": "Glob pattern, e.g. *.py, **/*.ts, src/**/*.json", "default": "*"},
-                "path": {"type": "string", "description": "Directory to search in (relative to working dir or absolute)", "default": "."},
+                "pattern": {
+                    "type": "string",
+                    "description": "Glob pattern, e.g. *.py, **/*.ts, src/**/*.json",
+                    "default": "*",
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Directory to search in (relative to working dir or absolute)",
+                    "default": ".",
+                },
             },
         },
         execute=_find_files,
@@ -268,7 +384,11 @@ ls_tool = register_tool(
         parameters={
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "Directory to list (relative to working dir or absolute)", "default": "."},
+                "path": {
+                    "type": "string",
+                    "description": "Directory to list (relative to working dir or absolute)",
+                    "default": ".",
+                },
             },
         },
         execute=_list_dir,

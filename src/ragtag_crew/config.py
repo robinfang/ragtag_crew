@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     session_summary_trigger_messages: int = 18
     session_summary_recent_messages: int = 12
     session_summary_max_chars: int = 4000
+    workspace_state_dir_name: str = ".ragtag_crew"
+    workspace_tmp_ttl_hours: int = 168
+    workspace_script_extensions: str = ".py,.ps1,.bat,.cmd,.sh,.js,.ts"
     tool_result_keep_recent: int = 8
     auto_memory_precompact_enabled: bool = False
     auto_memory_precompact_markers: str = (
@@ -138,6 +141,18 @@ class Settings(BaseSettings):
         if not self.available_models.strip():
             return []
         return [m.strip() for m in self.available_models.split(",") if m.strip()]
+
+    def get_workspace_script_extensions(self) -> set[str]:
+        if not self.workspace_script_extensions.strip():
+            return set()
+        return {
+            ext if ext.startswith(".") else f".{ext}"
+            for ext in (
+                item.strip().lower()
+                for item in self.workspace_script_extensions.split(",")
+            )
+            if ext and ext != "."
+        }
 
 
 settings = Settings()

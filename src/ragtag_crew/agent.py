@@ -358,7 +358,19 @@ class AgentSession:
             return "ABORTED"
         return result
 
-    _MODIFYING_TOOLS = frozenset({"write_file", "edit_file", "delete_file"})
+    _MODIFYING_TOOLS = frozenset(
+        {
+            "write",
+            "write_file",
+            "edit",
+            "edit_file",
+            "delete_file",
+            "create_workspace",
+            "delete_workspace",
+            "cleanup_workspaces",
+            "write_script",
+        }
+    )
 
     def _detect_file_modifications(self, since_index: int) -> bool:
         for msg in self.messages[since_index:]:

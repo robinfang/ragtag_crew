@@ -14,6 +14,8 @@ from ragtag_crew.tools.path_utils import resolve_path, resolve_read_path
 import ragtag_crew.tools.file_tools  # noqa: F401
 import ragtag_crew.tools.search_tools as search_tools
 import ragtag_crew.tools.shell_tools as shell_tools  # noqa: F401
+import ragtag_crew.tools.workspace_tools as workspace_tools  # noqa: F401
+import ragtag_crew.workspace_manager as wm_module
 
 
 @contextmanager
@@ -24,6 +26,26 @@ def working_dir(path: Path):
         yield
     finally:
         settings.working_dir = original
+
+
+@contextmanager
+def workspace_config(
+    state_dir_name: str = ".ragtag_crew",
+    tmp_ttl_hours: int = 168,
+    script_extensions: str = ".py,.ps1,.bat,.cmd,.sh,.js,.ts",
+):
+    original_state_dir_name = settings.workspace_state_dir_name
+    original_tmp_ttl_hours = settings.workspace_tmp_ttl_hours
+    original_script_extensions = settings.workspace_script_extensions
+    settings.workspace_state_dir_name = state_dir_name
+    settings.workspace_tmp_ttl_hours = tmp_ttl_hours
+    settings.workspace_script_extensions = script_extensions
+    try:
+        yield
+    finally:
+        settings.workspace_state_dir_name = original_state_dir_name
+        settings.workspace_tmp_ttl_hours = original_tmp_ttl_hours
+        settings.workspace_script_extensions = original_script_extensions
 
 
 class PathSandboxTests(unittest.TestCase):
@@ -115,6 +137,12 @@ class ToolPresetTests(unittest.TestCase):
         tools = get_tools_for_preset("coding")
         self.assertIn("external_demo", [tool.name for tool in tools])
 
+    def test_coding_preset_includes_workspace_tools(self) -> None:
+        tools = get_tools_for_preset("coding")
+        names = {tool.name for tool in tools}
+        self.assertIn("write_script", names)
+        self.assertIn("list_workspaces", names)
+
 
 class SearchToolTests(unittest.IsolatedAsyncioTestCase):
     async def test_find_and_ls_skip_internal_directories(self) -> None:
@@ -128,16 +156,44 @@ class SearchToolTests(unittest.IsolatedAsyncioTestCase):
             )
             (root / "__pycache__").mkdir()
             (root / "__pycache__" / "cached.pyc").write_bytes(b"x")
+            (root / ".ragtag_crew" / "workspaces" / "scripts").mkdir(parents=True)
+            (root / ".ragtag_crew" / "workspaces" / "scripts" / "saved.py").write_text(
+                "print('saved')\n", encoding="utf-8"
+            )
 
-            with working_dir(root):
-                listed = await search_tools._list_dir(".")
-                found = await search_tools._find_files("*.py", ".")
+            with working_dir(root), workspace_config():
+                with patch(
+                    "ragtag_crew.tools.search_tools._get_rg_path", return_value=None
+                ):
+                    listed = await search_tools._list_dir(".")
+                    found = await search_tools._find_files("*.py", ".")
 
             self.assertIn("visible/", listed)
             self.assertNotIn(".venv/", listed)
             self.assertNotIn("__pycache__/", listed)
+            self.assertNotIn(".ragtag_crew/", listed)
             self.assertIn("visible/main.py", found)
             self.assertNotIn("hidden.py", found)
+            self.assertNotIn("saved.py", found)
+
+    async def test_search_tools_allow_explicit_workspace_state_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workspace_dir = root / ".ragtag_crew" / "workspaces" / "scripts"
+            workspace_dir.mkdir(parents=True)
+            (workspace_dir / "saved.py").write_text(
+                "print('saved')\n", encoding="utf-8"
+            )
+
+            with working_dir(root), workspace_config():
+                with patch(
+                    "ragtag_crew.tools.search_tools._get_rg_path", return_value=None
+                ):
+                    listed = await search_tools._list_dir(".ragtag_crew")
+                    found = await search_tools._find_files("*.py", ".ragtag_crew")
+
+            self.assertIn("workspaces/", listed)
+            self.assertIn(".ragtag_crew/workspaces/scripts/saved.py", found)
 
     async def test_grep_python_fallback_respects_include_filter(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -308,3 +364,67 @@ class DeleteFileTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("ERROR", result)
             self.assertIn("not empty", result)
             self.assertTrue(target.exists())
+
+
+class WorkspaceToolTests(unittest.IsolatedAsyncioTestCase):
+    async def test_write_rejects_ambiguous_new_script_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            with working_dir(root), workspace_config():
+                result = await file_tools._write_file("foo.py", "print('x')\n")
+
+            self.assertIn("ERROR", result)
+            self.assertFalse((root / "foo.py").exists())
+
+    async def test_write_allows_explicit_root_script_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            with working_dir(root), workspace_config():
+                result = await file_tools._write_file("./foo.py", "print('x')\n")
+
+            self.assertIn("OK", result)
+            self.assertTrue((root / "foo.py").exists())
+
+    async def test_write_script_creates_reusable_script_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            with working_dir(root), workspace_config():
+                result = await workspace_tools._write_script_tool(
+                    filename="deploy.ps1",
+                    content="Write-Host 'ok'\n",
+                    purpose="deploy helper",
+                )
+                listed = await workspace_tools._list_workspaces_tool(
+                    kind="script", query="deploy"
+                )
+
+            self.assertIn("OK", result)
+            self.assertIn(".ragtag_crew/workspaces/scripts/", result)
+            self.assertIn("deploy.ps1", listed)
+            self.assertIn("deploy helper", listed)
+
+    def test_cleanup_workspaces_only_removes_stale_tmp_workspaces(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            with working_dir(root), workspace_config(tmp_ttl_hours=1):
+                tmp_record = wm_module.create_workspace(
+                    "tmp", purpose="scratch", now=10.0
+                )
+                script_record = wm_module.create_workspace(
+                    "script", purpose="keep me", now=10.0
+                )
+
+                matched = wm_module.cleanup_workspaces(
+                    kind="tmp",
+                    older_than_hours=1,
+                    dry_run=False,
+                    now=10.0 + 7200,
+                )
+
+            self.assertEqual([record.id for record in matched], [tmp_record.id])
+            self.assertFalse(tmp_record.path.exists())
+            self.assertTrue(script_record.path.exists())

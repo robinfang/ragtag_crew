@@ -40,6 +40,7 @@ class Tool:
 # ---------------------------------------------------------------------------
 
 _ALL_TOOLS: dict[str, Tool] = {}
+_BUILTIN_TOOLS_REGISTERED = False
 
 
 def register_tool(tool: Tool) -> Tool:
@@ -48,13 +49,28 @@ def register_tool(tool: Tool) -> Tool:
     return tool
 
 
+def ensure_builtin_tools_registered() -> None:
+    global _BUILTIN_TOOLS_REGISTERED
+    if _BUILTIN_TOOLS_REGISTERED:
+        return
+
+    import ragtag_crew.tools.file_tools  # noqa: F401
+    import ragtag_crew.tools.search_tools  # noqa: F401
+    import ragtag_crew.tools.shell_tools  # noqa: F401
+    import ragtag_crew.tools.workspace_tools  # noqa: F401
+
+    _BUILTIN_TOOLS_REGISTERED = True
+
+
 def get_tool(name: str) -> Tool:
     """Look up a registered tool by name.  Raises KeyError if unknown."""
+    ensure_builtin_tools_registered()
     return _ALL_TOOLS[name]
 
 
 def get_all_tools() -> dict[str, Tool]:
     """Return the full registry (name -> Tool)."""
+    ensure_builtin_tools_registered()
     return dict(_ALL_TOOLS)
 
 
@@ -75,6 +91,7 @@ def get_tools_for_preset(preset: str) -> list[Tool]:
     actually registered — silently skips any tool name that hasn't been
     registered yet.
     """
+    ensure_builtin_tools_registered()
     names = TOOL_PRESETS.get(preset)
     if names is None:
         raise KeyError(f"Unknown tool preset: {preset}")
