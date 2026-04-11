@@ -85,7 +85,7 @@ _DOWNLOAD_REGISTRY: dict[str, DownloadInfo] = {
 
 
 def _cache_dir() -> Path:
-    return Path(settings.tools_cache_dir)
+    return Path(settings.tools_cache_dir).expanduser()
 
 
 def _cached_binary(name: str) -> Path:

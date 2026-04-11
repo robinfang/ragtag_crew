@@ -55,7 +55,9 @@ class DownloadInfoTests(unittest.TestCase):
 class ResolveBinaryTests(unittest.TestCase):
     def test_resolve_binary_finds_system_binary(self) -> None:
         sentinel = "/usr/bin/test_rg"
-        with patch("ragtag_crew.tools.bin_resolver.shutil.which", return_value=sentinel):
+        with patch(
+            "ragtag_crew.tools.bin_resolver.shutil.which", return_value=sentinel
+        ):
             result = br.resolve_binary("rg")
         self.assertEqual(result, Path(sentinel))
 
@@ -67,7 +69,9 @@ class ResolveBinaryTests(unittest.TestCase):
             cached_rg.write_bytes(b"fake rg")
 
             with _TempSetting("tools_cache_dir", str(cache)):
-                with patch("ragtag_crew.tools.bin_resolver.shutil.which", return_value=None):
+                with patch(
+                    "ragtag_crew.tools.bin_resolver.shutil.which", return_value=None
+                ):
                     result = br.resolve_binary("rg")
 
             self.assertEqual(result, cached_rg)
@@ -100,7 +104,10 @@ class ResolveBinaryTests(unittest.TestCase):
             with (
                 _TempSetting("tools_cache_dir", str(cache)),
                 patch("ragtag_crew.tools.bin_resolver.shutil.which", return_value=None),
-                patch("ragtag_crew.tools.bin_resolver._download_binary", return_value=fake_rg),
+                patch(
+                    "ragtag_crew.tools.bin_resolver._download_binary",
+                    return_value=fake_rg,
+                ),
             ):
                 result = br.resolve_binary("rg", download_info=fake_info)
 
@@ -123,7 +130,10 @@ class ResolveBinaryTests(unittest.TestCase):
             with (
                 _TempSetting("tools_cache_dir", str(cache)),
                 patch("ragtag_crew.tools.bin_resolver.shutil.which", return_value=None),
-                patch("ragtag_crew.tools.bin_resolver._download_binary", return_value=custom),
+                patch(
+                    "ragtag_crew.tools.bin_resolver._download_binary",
+                    return_value=custom,
+                ),
             ):
                 result = br.resolve_binary("mytool", download_info=info)
 
@@ -179,6 +189,11 @@ class CacheDirTests(unittest.TestCase):
     def test_cache_dir_uses_config(self) -> None:
         with _TempSetting("tools_cache_dir", "/custom/bin"):
             self.assertEqual(br._cache_dir(), Path("/custom/bin"))
+
+    def test_cache_dir_expands_user_home(self) -> None:
+        raw = "~/.ragtag_crew/bin"
+        with _TempSetting("tools_cache_dir", raw):
+            self.assertEqual(br._cache_dir(), Path(raw).expanduser())
 
     def test_cached_binary_appends_exe_on_windows(self) -> None:
         with (
