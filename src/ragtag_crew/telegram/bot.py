@@ -181,6 +181,19 @@ async def _post_init(app: Application) -> None:
 
 
 async def _post_stop(app: Application) -> None:
+    for session in _sessions.values():
+        if session.is_busy:
+            session.abort()
+
+    streamers = list(app.bot_data.pop("active_streamers", []))
+    if streamers:
+        results = await asyncio.gather(
+            *(streamer.shutdown() for streamer in streamers), return_exceptions=True
+        )
+        for result in results:
+            if isinstance(result, Exception):
+                log.warning("Failed to stop telegram streamer cleanly: %s", result)
+
     task = app.bot_data.pop("telegram_health_monitor_task", None)
     if task is None:
         return
@@ -1017,6 +1030,8 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     placeholder = await update.message.reply_text("Thinking...")
     streamer = TelegramStreamer(placeholder)
+    if app is not None:
+        app.bot_data.setdefault("active_streamers", []).append(streamer)
     collector = TraceCollector(chat_id=chat_id)
     collector.set_context(
         model=session.model,
@@ -1042,6 +1057,10 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         collector.finalize()
         save_session(chat_id, session)
         await streamer.finalize()
+        if app is not None:
+            streamers = app.bot_data.get("active_streamers", [])
+            if streamer in streamers:
+                streamers.remove(streamer)
         session.unsubscribe(streamer.on_event)
         session.unsubscribe(collector.on_event)
 
@@ -1083,6 +1102,7 @@ def build_app() -> Application:
         .build()
     )
     app.bot_data["telegram_runtime_health"] = health
+    app.bot_data["active_streamers"] = []
 
     app.add_handler(CommandHandler("start", _cmd_start))
     app.add_handler(CommandHandler("new", _cmd_new))

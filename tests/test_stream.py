@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from unittest.mock import patch
 
-from telegram.error import BadRequest
+from telegram.error import BadRequest, NetworkError, RetryAfter
 
 from ragtag_crew.telegram.stream import TelegramStreamer
 
@@ -41,6 +42,24 @@ class BlockingMessage(FakeMessage):
         self.edit_calls.append({"text": text, **kwargs})
         await self.release_edit.wait()
         return self
+
+
+class RetryAfterMessage(FakeMessage):
+    def __init__(self, retry_after: float) -> None:
+        super().__init__()
+        self.retry_after = retry_after
+
+    async def edit_text(self, text: str, **kwargs):  # type: ignore[no-untyped-def]
+        self.edit_calls.append({"text": text, **kwargs})
+        raise RetryAfter(self.retry_after)
+
+
+class ShutdownMessage(FakeMessage):
+    async def edit_text(self, text: str, **kwargs):  # type: ignore[no-untyped-def]
+        self.edit_calls.append({"text": text, **kwargs})
+        raise NetworkError(
+            "Unknown error in HTTP implementation: RuntimeError('This HTTPXRequest is not initialized!')"
+        )
 
 
 class TelegramStreamerTests(unittest.IsolatedAsyncioTestCase):
@@ -83,6 +102,33 @@ class TelegramStreamerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message.edit_calls[0]["parse_mode"], "HTML")
         self.assertNotIn("parse_mode", message.edit_calls[1])
         self.assertEqual(message.edit_calls[1]["text"], "plain < unsafe")
+
+    async def test_retry_after_does_not_block_event_or_finalize(self) -> None:
+        message = RetryAfterMessage(retry_after=210)
+        streamer = TelegramStreamer(message)
+
+        await asyncio.wait_for(
+            streamer.on_event("message_update", delta="hello"), timeout=0.05
+        )
+        await asyncio.sleep(0)
+
+        self.assertEqual(len(message.edit_calls), 1)
+
+        with patch("ragtag_crew.telegram.stream._FINALIZE_WAIT_SECS", 0.05):
+            await asyncio.wait_for(streamer.finalize(), timeout=0.2)
+
+        self.assertTrue(streamer._worker_task.done())
+
+    async def test_shutdown_transport_error_stops_worker_quietly(self) -> None:
+        message = ShutdownMessage()
+        streamer = TelegramStreamer(message)
+
+        await streamer.on_event("message_update", delta="hello")
+        await asyncio.sleep(0)
+        await asyncio.wait_for(streamer.finalize(), timeout=0.2)
+
+        self.assertTrue(streamer._transport_closed)
+        self.assertTrue(streamer._worker_task.done())
 
 
 if __name__ == "__main__":

@@ -43,8 +43,11 @@ class FakeMessage:
 
 
 class FakeContext:
-    def __init__(self, args: list[str] | None = None) -> None:
+    def __init__(
+        self, args: list[str] | None = None, application: object | None = None
+    ) -> None:
         self.args = args or []
+        self.application = application
 
 
 class FakeUpdate:
@@ -1114,6 +1117,50 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         streamer.finalize.assert_awaited_once()
         save_session.assert_called_once_with(100, session)
 
+    async def test_handle_message_registers_and_removes_active_streamer(self) -> None:
+        placeholder = FakeSentMessage()
+        update = FakeUpdate(chat_id=100, text="hello", placeholder=placeholder)
+        session = SimpleNamespace(
+            is_busy=False,
+            model="openai/GLM-5.1",
+            tool_preset="coding",
+            enabled_skills=[],
+            planning_enabled=True,
+            prompt=AsyncMock(),
+            subscribe=lambda cb: None,
+            unsubscribe=lambda cb: None,
+        )
+        bot_module._sessions[100] = session
+        streamer = SimpleNamespace(on_event=object(), finalize=AsyncMock())
+        app = SimpleNamespace(bot_data={"active_streamers": []})
+
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch("ragtag_crew.telegram.bot.TelegramStreamer", return_value=streamer),
+            patch("ragtag_crew.telegram.bot.save_session"),
+            patch("ragtag_crew.telegram.bot.log"),
+        ):
+            await bot_module._handle_message(update, FakeContext(application=app))
+
+        self.assertEqual(app.bot_data["active_streamers"], [])
+
+    async def test_post_stop_aborts_busy_sessions_and_shuts_down_streamers(
+        self,
+    ) -> None:
+        busy_session = SimpleNamespace(is_busy=True, abort=unittest.mock.Mock())
+        idle_session = SimpleNamespace(is_busy=False, abort=unittest.mock.Mock())
+        bot_module._sessions[100] = busy_session
+        bot_module._sessions[200] = idle_session
+        streamer = SimpleNamespace(shutdown=AsyncMock())
+        app = SimpleNamespace(bot_data={"active_streamers": [streamer]})
+
+        await bot_module._post_stop(app)
+
+        busy_session.abort.assert_called_once_with()
+        idle_session.abort.assert_not_called()
+        streamer.shutdown.assert_awaited_once()
+        self.assertEqual(app.bot_data.get("active_streamers"), None)
+
     async def test_get_session_uses_restored_session(self) -> None:
         restored = object()
 
@@ -1178,6 +1225,7 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(request_instances), 1)
         self.assertEqual(len(get_updates_request_instances), 1)
         self.assertIsNotNone(app.bot_data.get("telegram_runtime_health"))
+        self.assertEqual(app.bot_data.get("active_streamers"), [])
         self.assertIsNotNone(app.post_init)
         self.assertIsNotNone(app.post_stop)
         self.assertFalse(request_instances[0]["httpx_kwargs"].get("trust_env", True))

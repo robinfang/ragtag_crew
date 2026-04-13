@@ -11,7 +11,7 @@ import logging
 import time
 
 from telegram import Message
-from telegram.error import BadRequest, RetryAfter
+from telegram.error import BadRequest, NetworkError, RetryAfter
 
 from ragtag_crew.llm import ToolCall
 from ragtag_crew.telegram.html import render_telegram_html
@@ -24,6 +24,7 @@ log = logging.getLogger(__name__)
 _THROTTLE_SECS = 1.0
 _MAX_MSG_LEN = 4096
 _MAX_RENDER_INPUT = 3500
+_FINALIZE_WAIT_SECS = 3.0
 
 
 def _summarize_args(args: dict) -> str:
@@ -55,21 +56,28 @@ class TelegramStreamer:
         self.buffer = ""
         self._last_edit_time: float = 0.0
         self._last_sent_text: str = ""
+        self._rate_limited_until: float = 0.0
         self._extra_messages: list[Message] = []
-        self._flush_task: asyncio.Task[None] | None = None
-        self._flush_lock = asyncio.Lock()
+        self._closing = False
+        self._transport_closed = False
+        self._flush_event = asyncio.Event()
+        self._idle_event = asyncio.Event()
+        self._idle_event.set()
+        self._worker_task = asyncio.create_task(
+            self._run_worker(), name="ragtag_crew:telegram_stream"
+        )
 
     async def on_event(self, event_type: str, **kwargs) -> None:
         """Event callback — wired to AgentSession.subscribe()."""
         match event_type:
             case "message_update":
                 self.buffer += kwargs["delta"]
-                self._maybe_flush()
+                self._request_flush()
 
             case "tool_execution_start":
                 tc: ToolCall = kwargs["tool_call"]
                 self.buffer += f"\n⏳ {tc.name}({_summarize_args(tc.arguments)})\n"
-                self._maybe_flush()
+                self._request_flush()
 
             case "tool_execution_end":
                 # Replace the ⏳ with ✅ inline isn't worth the complexity;
@@ -77,16 +85,16 @@ class TelegramStreamer:
                 pass
 
             case "agent_end":
-                await self._flush()
+                self._request_flush()
 
             case "cancelled":
                 self.buffer += "\n\n⚠️ 已取消"
-                await self._flush()
+                self._request_flush()
 
             case "error":
                 err = kwargs.get("error", "Unknown error")
                 self.buffer += f"\n\n❌ Error: {err}"
-                await self._flush()
+                self._request_flush()
 
     async def finalize(self) -> None:
         """Ensure all buffered text has been sent after the loop ends.
@@ -94,66 +102,147 @@ class TelegramStreamer:
         If the total text exceeds Telegram's 4096 limit, send overflow
         as separate messages.
         """
-        await self._flush()
+        if self._transport_closed:
+            await self.shutdown()
+            return
 
-        # Handle overflow beyond the first message
-        _, consumed = self._render_window(self.buffer)
-        overflow = self.buffer[consumed:]
-        while overflow:
-            rendered, consumed = self._render_window(overflow)
-            raw_chunk = overflow[:consumed]
-            overflow = overflow[consumed:]
-            try:
-                msg = await self._send_text(rendered, raw_chunk, reply=True)
-                self._extra_messages.append(msg)
-            except Exception:
-                log.exception("Failed to send overflow message")
+        self._closing = True
+        self._request_flush()
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(self._idle_event.wait()), _FINALIZE_WAIT_SECS
+            )
+        except asyncio.TimeoutError:
+            log.warning(
+                "Telegram finalize timed out after %.1fs; dropping pending edits",
+                _FINALIZE_WAIT_SECS,
+            )
+
+        if not self._transport_closed and self._is_primary_message_synced():
+            _, consumed = self._render_window(self.buffer)
+            overflow = self.buffer[consumed:]
+            while overflow and not self._transport_closed:
+                rendered, consumed = self._render_window(overflow)
+                raw_chunk = overflow[:consumed]
+                overflow = overflow[consumed:]
+                try:
+                    msg = await self._send_text(rendered, raw_chunk, reply=True)
+                    self._extra_messages.append(msg)
+                except NetworkError as exc:
+                    if self._handle_network_error(exc):
+                        break
+                    log.warning("reply_text failed: %s", exc)
+                    break
+                except Exception:
+                    log.exception("Failed to send overflow message")
+                    break
+
+        await self.shutdown()
+
+    async def shutdown(self) -> None:
+        """Stop the background worker and disable future Telegram sends."""
+        self._closing = True
+        self._transport_closed = True
+        self._flush_event.set()
+        if not self._worker_task.done():
+            self._worker_task.cancel()
+        try:
+            await self._worker_task
+        except asyncio.CancelledError:
+            pass
 
     # -- internal -----------------------------------------------------------
 
-    def _maybe_flush(self) -> None:
-        now = time.monotonic()
-        if now - self._last_edit_time < _THROTTLE_SECS:
+    def _request_flush(self) -> None:
+        if self._transport_closed or self._closing and self._worker_task.done():
             return
-        if self._flush_task and not self._flush_task.done():
-            return
-        self._flush_task = asyncio.create_task(self._flush_in_background())
+        self._idle_event.clear()
+        self._flush_event.set()
 
-    async def _flush_in_background(self) -> None:
+    async def _run_worker(self) -> None:
         try:
-            await self._flush()
+            while True:
+                await self._flush_event.wait()
+                self._flush_event.clear()
+
+                if self._transport_closed:
+                    return
+
+                while not self._transport_closed:
+                    changed = await self._flush_once()
+                    if self._transport_closed:
+                        return
+                    if self._flush_event.is_set():
+                        self._flush_event.clear()
+                        continue
+                    self._idle_event.set()
+                    if self._closing:
+                        return
+                    if not changed:
+                        break
         except Exception:
             log.exception("background telegram flush failed")
         finally:
-            current = asyncio.current_task()
-            if self._flush_task is current:
-                self._flush_task = None
+            self._idle_event.set()
 
-    async def _flush(self) -> None:
-        retry_after: float | None = None
+    async def _flush_once(self) -> bool:
         while True:
-            if retry_after is not None:
-                await asyncio.sleep(retry_after)
-                retry_after = None
+            if self._transport_closed:
+                return False
 
-            async with self._flush_lock:
-                rendered, consumed = self._render_window(self.buffer)
-                raw_text = self.buffer[:consumed] if self.buffer else "..."
-                if raw_text == self._last_sent_text:
-                    return
+            rendered, consumed = self._render_window(self.buffer)
+            raw_text = self.buffer[:consumed] if self.buffer else "..."
+            if raw_text == self._last_sent_text:
+                return False
 
-                try:
-                    await self._send_text(rendered, raw_text, reply=False)
-                    self._last_sent_text = raw_text
-                    self._last_edit_time = time.monotonic()
-                    return
-                except RetryAfter as exc:
-                    log.warning("Rate limited, waiting %s seconds", exc.retry_after)
-                    retry_after = exc.retry_after
-                except BadRequest as exc:
-                    if "not modified" not in str(exc).lower():
-                        log.warning("edit_text failed: %s", exc)
-                    return
+            now = time.monotonic()
+            wait_for_rate_limit = max(0.0, self._rate_limited_until - now)
+            wait_for_throttle = max(0.0, self._last_edit_time + _THROTTLE_SECS - now)
+            sleep_for = max(wait_for_rate_limit, wait_for_throttle)
+            if sleep_for > 0:
+                await asyncio.sleep(sleep_for)
+                continue
+
+            try:
+                await self._send_text(rendered, raw_text, reply=False)
+                self._last_sent_text = raw_text
+                self._last_edit_time = time.monotonic()
+                self._rate_limited_until = 0.0
+                return True
+            except RetryAfter as exc:
+                retry_after = max(float(exc.retry_after), _THROTTLE_SECS)
+                log.warning("Rate limited, waiting %s seconds", retry_after)
+                self._rate_limited_until = time.monotonic() + retry_after
+            except NetworkError as exc:
+                if self._handle_network_error(exc):
+                    return False
+                log.warning("edit_text failed: %s", exc)
+                return False
+            except BadRequest as exc:
+                if "not modified" not in str(exc).lower():
+                    log.warning("edit_text failed: %s", exc)
+                return False
+
+    def _is_primary_message_synced(self) -> bool:
+        _, consumed = self._render_window(self.buffer)
+        raw_text = self.buffer[:consumed] if self.buffer else "..."
+        return raw_text == self._last_sent_text
+
+    def _handle_network_error(self, exc: NetworkError) -> bool:
+        if not self._is_request_shutdown_error(exc):
+            return False
+        self._transport_closed = True
+        log.info("Telegram request transport closed during stream shutdown")
+        return True
+
+    def _is_request_shutdown_error(self, exc: BaseException) -> bool:
+        needle = "this httpxrequest is not initialized"
+        current: BaseException | None = exc
+        while current is not None:
+            if needle in str(current).lower():
+                return True
+            current = current.__cause__ or current.__context__
+        return False
 
     def _render_window(self, raw_text: str) -> tuple[str, int]:
         if not raw_text:
