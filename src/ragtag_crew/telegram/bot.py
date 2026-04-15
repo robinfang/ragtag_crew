@@ -345,18 +345,28 @@ async def _cmd_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     args = context.args or []
 
     if not args or args[0].lower() == "current":
-        await update.message.reply_text(_format_session_route(route))
+        await update.message.reply_text(
+            _with_session_usage(_format_session_route(route))
+        )
         return
 
     action = args[0].lower()
     if action == "use":
         if len(args) < 2:
-            await update.message.reply_text("Usage: /session use <session_key>")
+            await update.message.reply_text(
+                _with_session_usage("Usage error: missing session target.")
+            )
             return
         if session.is_busy:
-            await update.message.reply_text("Please wait — agent is busy.")
+            await update.message.reply_text(
+                _with_session_usage("Please wait — agent is busy.")
+            )
             return
-        target_session_key = args[1]
+        try:
+            target_session_key = _resolve_session_target(args[1])
+        except ValueError as exc:
+            await update.message.reply_text(_with_session_usage(str(exc)))
+            return
         route = set_session_route(
             frontend="telegram",
             peer_id=chat_id,
@@ -365,13 +375,15 @@ async def _cmd_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
         _get_session_by_key(route.current_session_key)
         await update.message.reply_text(
-            "Switched session.\n\n" + _format_session_route(route)
+            _with_session_usage("Switched session.\n\n" + _format_session_route(route))
         )
         return
 
     if action == "reset":
         if session.is_busy:
-            await update.message.reply_text("Please wait — agent is busy.")
+            await update.message.reply_text(
+                _with_session_usage("Please wait — agent is busy.")
+            )
             return
         route = reset_session_route(
             frontend="telegram",
@@ -380,12 +392,14 @@ async def _cmd_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
         _get_session_by_key(route.current_session_key)
         await update.message.reply_text(
-            "Session routing reset.\n\n" + _format_session_route(route)
+            _with_session_usage(
+                "Session routing reset.\n\n" + _format_session_route(route)
+            )
         )
         return
 
     await update.message.reply_text(
-        "Usage: /session current | /session use <session_key> | /session reset"
+        _with_session_usage("Usage error: unknown /session action.")
     )
 
 
@@ -430,8 +444,23 @@ def _help_text() -> str:
         "/sessions - 列出最近保存的 session\n"
         "/session current - 查看当前绑定\n"
         "/session use <session_key> - 切换到指定 session\n"
+        "/session use <index> - 按 /sessions 序号切换\n"
         "/session reset - 恢复默认 session"
     )
+
+
+def _session_usage_text() -> str:
+    return (
+        "Usage:\n"
+        "/session current\n"
+        "/session use <session_key>\n"
+        "/session use <index>\n"
+        "/session reset"
+    )
+
+
+def _with_session_usage(text: str) -> str:
+    return f"{text}\n\n{_session_usage_text()}"
 
 
 def _format_session_route(route: SessionRoute) -> str:
@@ -456,6 +485,24 @@ def _format_saved_sessions() -> str:
             f"{_format_summary_time(record.last_active_at)}"
         )
     return "\n".join(lines)
+
+
+def _resolve_session_target(target: str) -> SessionKey:
+    records = list_sessions()
+    for record in records:
+        if record.session_key == target:
+            return target
+
+    if target.isdecimal():
+        index = int(target)
+        if index < 1 or index > len(records):
+            # Telegram session keys are often long numeric IDs. Keep those usable.
+            if len(target) <= 4:
+                raise ValueError(f"Session index out of range: {target}")
+            return target
+        return records[index - 1].session_key
+
+    return target
 
 
 async def _cmd_new(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

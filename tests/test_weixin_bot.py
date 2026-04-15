@@ -53,6 +53,7 @@ class WeixinBotTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("/help", reply)
         self.assertIn("/sessions", reply)
         self.assertIn("/session use <session_key>", reply)
+        self.assertIn("/session use <index>", reply)
 
     async def test_session_current_shows_route(self) -> None:
         bot = FakeWeixinBot()
@@ -77,6 +78,7 @@ class WeixinBotTests(unittest.IsolatedAsyncioTestCase):
         reply = bot.reply.await_args.args[1]
         self.assertIn("Current session: 458749049", reply)
         self.assertIn("Mode: overridden", reply)
+        self.assertIn("/session use <index>", reply)
 
     async def test_session_use_rejects_busy_session(self) -> None:
         bot = FakeWeixinBot()
@@ -93,7 +95,65 @@ class WeixinBotTests(unittest.IsolatedAsyncioTestCase):
             await weixin_bot_module.handle_incoming_message(bot, message)
 
         set_route.assert_not_called()
-        bot.reply.assert_awaited_once_with(message, "Please wait — agent is busy.")
+        reply = bot.reply.await_args.args[1]
+        self.assertIn("Please wait — agent is busy.", reply)
+        self.assertIn("/session use <index>", reply)
+
+    async def test_session_use_switches_by_index(self) -> None:
+        bot = FakeWeixinBot()
+        message = FakeMessage("/session use 2")
+        route = weixin_bot_module.SessionRoute(
+            peer_key="weixin:wx-1",
+            current_session_key="458749049",
+            default_session_key="weixin:wx-1",
+            is_overridden=True,
+        )
+        records = [
+            SimpleNamespace(session_key="weixin:wx-1"),
+            SimpleNamespace(session_key="458749049"),
+        ]
+
+        with (
+            patch("ragtag_crew.weixin.bot._is_authorized", return_value=True),
+            patch(
+                "ragtag_crew.weixin.bot._get_session",
+                return_value=SimpleNamespace(is_busy=False),
+            ),
+            patch("ragtag_crew.weixin.bot.list_sessions", return_value=records),
+            patch(
+                "ragtag_crew.weixin.bot.set_session_route", return_value=route
+            ) as set_route,
+            patch("ragtag_crew.weixin.bot._get_session_by_key") as get_by_key,
+        ):
+            await weixin_bot_module.handle_incoming_message(bot, message)
+
+        set_route.assert_called_once_with(
+            frontend="weixin",
+            peer_id="wx-1",
+            default_session_key="weixin:wx-1",
+            session_key="458749049",
+        )
+        get_by_key.assert_called_once_with("458749049")
+
+    async def test_session_use_rejects_out_of_range_index(self) -> None:
+        bot = FakeWeixinBot()
+        message = FakeMessage("/session use 9")
+
+        with (
+            patch("ragtag_crew.weixin.bot._is_authorized", return_value=True),
+            patch(
+                "ragtag_crew.weixin.bot._get_session",
+                return_value=SimpleNamespace(is_busy=False),
+            ),
+            patch("ragtag_crew.weixin.bot.list_sessions", return_value=[]),
+            patch("ragtag_crew.weixin.bot.set_session_route") as set_route,
+        ):
+            await weixin_bot_module.handle_incoming_message(bot, message)
+
+        set_route.assert_not_called()
+        reply = bot.reply.await_args.args[1]
+        self.assertIn("Session index out of range: 9", reply)
+        self.assertIn("/session use <index>", reply)
 
     async def test_session_reset_switches_back_to_default(self) -> None:
         bot = FakeWeixinBot()
@@ -124,7 +184,9 @@ class WeixinBotTests(unittest.IsolatedAsyncioTestCase):
             default_session_key="weixin:wx-1",
         )
         get_by_key.assert_called_once_with("weixin:wx-1")
-        self.assertIn("Session routing reset.", bot.reply.await_args.args[1])
+        reply = bot.reply.await_args.args[1]
+        self.assertIn("Session routing reset.", reply)
+        self.assertIn("/session use <index>", reply)
 
     async def test_sessions_command_lists_saved_sessions(self) -> None:
         bot = FakeWeixinBot()
