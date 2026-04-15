@@ -103,6 +103,22 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual([path.name for path in json_files], ["123.json"])
         self.assertEqual(tmp_files, [])
 
+    def test_string_session_key_uses_safe_filename(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with session_storage(root):
+                session = AgentSession(
+                    model="openai/GLM-5.1",
+                    tools=[Tool("noop", "noop", {"type": "object"}, _noop_tool)],
+                )
+                save_session("weixin:user/42", session)
+
+                json_files = sorted(root.glob("*.json"))
+
+        self.assertEqual(
+            [path.name for path in json_files], ["weixin%3Auser%2F42.json"]
+        )
+
     def test_expired_sessions_are_deleted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -157,7 +173,7 @@ class SessionStoreTests(unittest.TestCase):
 
                 records = list_sessions()
 
-        self.assertEqual([r.chat_id for r in records], [2, 1])
+        self.assertEqual([r.session_key for r in records], ["2", "1"])
         self.assertEqual(records[0].model, "m2")
         self.assertEqual(records[1].tool_preset, "coding")
 
@@ -166,12 +182,14 @@ class SessionStoreTests(unittest.TestCase):
             root = Path(tmp)
             with session_storage(root):
                 (root / "123.json").write_text(
-                    json.dumps({"chat_id": 123, "session_summary": "hello"}),
+                    json.dumps(
+                        {"session_key": "weixin:abc", "session_summary": "hello"}
+                    ),
                     encoding="utf-8",
                 )
-                payload = read_session_payload(123)
+                payload = read_session_payload("123")
 
-        self.assertEqual(payload["chat_id"], 123)
+        self.assertEqual(payload["session_key"], "weixin:abc")
         self.assertEqual(payload["session_summary"], "hello")
 
 

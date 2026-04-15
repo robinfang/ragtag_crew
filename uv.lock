@@ -812,6 +812,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "python-telegram-bot" },
     { name = "watchfiles" },
+    { name = "weixin-bot-sdk" },
 ]
 
 [package.dev-dependencies]
@@ -826,6 +827,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.0" },
     { name = "python-telegram-bot", specifier = ">=21.0" },
     { name = "watchfiles", specifier = ">=0.20" },
+    { name = "weixin-bot-sdk", editable = "../weixin-bot/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -1102,6 +1104,17 @@ wheels = [
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/87/0a/90eb755f568de2688cb220171c4191df932232c20946966c27a59c400850/watchfiles-1.1.1-cp312-cp312-win_amd64.whl", hash = "sha256:91d4c9a823a8c987cce8fa2690923b069966dabb196dd8d137ea2cede885fde9", size = 288410, upload-time = "2025-10-14T15:05:00.081Z" },
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/36/76/f322701530586922fbd6723c4f91ace21364924822a8772c549483abed13/watchfiles-1.1.1-cp312-cp312-win_arm64.whl", hash = "sha256:a625815d4a2bdca61953dbba5a39d60164451ef34c88d751f6c368c3ea73d404", size = 278209, upload-time = "2025-10-14T15:05:01.168Z" },
 ]
+
+[[package]]
+name = "weixin-bot-sdk"
+version = "0.2.0"
+source = { editable = "../weixin-bot/python" }
+dependencies = [
+    { name = "aiohttp" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "aiohttp" }]
 
 [[package]]
 name = "yarl"

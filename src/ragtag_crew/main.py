@@ -8,6 +8,7 @@ import logging
 import logging.handlers
 import os
 import sys
+import threading
 import time
 from collections.abc import Sequence
 from importlib.metadata import version
@@ -21,7 +22,7 @@ from ragtag_crew.skill_loader import get_skill, list_skills
 _LOG_FORMAT = "%(asctime)s %(levelname)-8s %(name)s  %(message)s"
 
 _DESCRIPTION = (
-    "草台班子 · 单用户自托管 Telegram AI 编程助手\n"
+    "草台班子 · 单用户自托管 Telegram / 微信 AI 编程助手\n"
     "\n"
     "配置走 .env，LLM 通过 litellm 统一接入，支持本地工具、MCP、OpenAPI 工具和浏览器自动化。"
 )
@@ -91,11 +92,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="列出已保存的会话历史",
     )
-    parser.add_argument(
-        "--history",
-        type=int,
-        help="查看指定 chat_id 的会话历史摘要",
-    )
+    parser.add_argument("--history", help="查看指定 session_key 的会话历史摘要")
     return parser
 
 
@@ -169,20 +166,31 @@ def _run_telegram_frontend() -> int:
             backoff = min(max_backoff, backoff * 2)
 
 
+def _run_weixin_frontend() -> int:
+    from ragtag_crew.weixin.bot import run_weixin_frontend
+
+    return run_weixin_frontend()
+
+
 def _check_config() -> None:
-    token_set = bool(settings.telegram_bot_token.strip())
-    user_count = len(settings.get_allowed_user_ids())
+    telegram_enabled = bool(settings.telegram_bot_token.strip())
+    telegram_user_count = len(settings.get_allowed_user_ids())
+    weixin_enabled = settings.weixin_enabled
+    weixin_user_count = len(settings.get_weixin_allowed_user_ids())
+    frontend_ready = telegram_enabled or weixin_enabled
 
     print("ragtag-crew config check\n")
-    print(f"  token       : {'set' if token_set else '<empty>'}")
-    print(f"  allowed ids : {user_count} user(s)")
+    print(f"  telegram    : {'enabled' if telegram_enabled else '<empty token>'}")
+    print(f"  tg ids      : {telegram_user_count} user(s)")
+    print(f"  weixin      : {'enabled' if weixin_enabled else 'disabled'}")
+    print(f"  wx ids      : {weixin_user_count} user(s)")
     print(f"  model       : {settings.default_model}")
     print(f"  tools       : {settings.default_tool_preset}")
     print(f"  working_dir : {os.path.abspath(settings.working_dir)}")
     print()
 
-    if not token_set:
-        print("FAIL: TELEGRAM_BOT_TOKEN not set")
+    if not frontend_ready:
+        print("FAIL: 至少需要启用一个前端（TELEGRAM_BOT_TOKEN 或 WEIXIN_ENABLED=true）")
     else:
         print("OK")
 
@@ -202,12 +210,12 @@ def _show_history_list() -> None:
     print("Saved sessions:\n")
     for record in records:
         print(
-            f"- chat_id={record.chat_id} model={record.model or '(unknown)'} "
+            f"- session_key={record.session_key} model={record.model or '(unknown)'} "
             f"tools={record.tool_preset or '(unknown)'} last_active_at={record.last_active_at:.0f}"
         )
 
 
-def _show_history(chat_id: int) -> None:
+def _show_history(session_key: str) -> None:
     from ragtag_crew.session_store import (
         cleanup_expired_sessions,
         read_session_payload,
@@ -215,12 +223,12 @@ def _show_history(chat_id: int) -> None:
 
     cleanup_expired_sessions()
     try:
-        payload = read_session_payload(chat_id)
+        payload = read_session_payload(session_key)
     except FileNotFoundError:
-        print(f"Session not found: {chat_id}")
+        print(f"Session not found: {session_key}")
         return
 
-    print(f"Session {chat_id}\n")
+    print(f"Session {session_key}\n")
     print(f"model: {payload.get('model', '(unknown)')}")
     print(f"tools: {payload.get('tool_preset', '(unknown)')}")
     print(f"enabled_skills: {', '.join(payload.get('enabled_skills', [])) or '(none)'}")
@@ -308,9 +316,12 @@ async def _repl_loop() -> None:
 
     ensure_builtin_tools_registered()
 
-    _REPL_CHAT_ID = 0
+    _REPL_SESSION_KEY = 0
 
-    restored = _load_session(_REPL_CHAT_ID, default_system_prompt=DEFAULT_SYSTEM_PROMPT)
+    restored = _load_session(
+        _REPL_SESSION_KEY,
+        default_system_prompt=DEFAULT_SYSTEM_PROMPT,
+    )
     if restored is not None:
         session = restored
         print(
@@ -367,7 +378,7 @@ async def _repl_loop() -> None:
 
         if text == "/new":
             session.reset()
-            _delete_session(_REPL_CHAT_ID)
+            _delete_session(_REPL_SESSION_KEY)
             print("Session cleared.")
             continue
 
@@ -398,11 +409,11 @@ async def _repl_loop() -> None:
             action = text[6:].strip().lower()
             if action == "on":
                 session.planning_enabled = True
-                _save_session(_REPL_CHAT_ID, session)
+                _save_session(_REPL_SESSION_KEY, session)
                 print("Plan mode ON — 输出编号计划后再执行。")
             elif action == "off":
                 session.planning_enabled = False
-                _save_session(_REPL_CHAT_ID, session)
+                _save_session(_REPL_SESSION_KEY, session)
                 print("Build mode ON — 直接执行，不输出计划。")
             else:
                 print("Usage: /plan on | /plan off")
@@ -478,7 +489,7 @@ async def _repl_loop() -> None:
             print("(busy, use /cancel to abort)")
             continue
 
-        collector = TraceCollector(chat_id=_REPL_CHAT_ID)
+        collector = TraceCollector(session_key=_REPL_SESSION_KEY)
         collector.set_context(
             model=session.model,
             user_input=text,
@@ -501,7 +512,7 @@ async def _repl_loop() -> None:
         finally:
             collector.finalize()
             session.unsubscribe(collector.on_event)
-            _save_session(_REPL_CHAT_ID, session)
+            _save_session(_REPL_SESSION_KEY, session)
 
     print("Bye.")
 
@@ -515,7 +526,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.check:
         _check_config()
-        return 0 if settings.telegram_bot_token.strip() else 1
+        return (
+            0 if (settings.telegram_bot_token.strip() or settings.weixin_enabled) else 1
+        )
 
     if args.history_list:
         _show_history_list()
@@ -535,10 +548,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     log.info("ragtag_crew starting  pid=%s", os.getpid())
 
-    if not settings.telegram_bot_token:
-        log.error(
-            "TELEGRAM_BOT_TOKEN not set.  Copy .env.example to .env and fill it in."
-        )
+    telegram_enabled = bool(settings.telegram_bot_token.strip())
+    weixin_enabled = settings.weixin_enabled
+    if not telegram_enabled and not weixin_enabled:
+        log.error("No frontend enabled. Set TELEGRAM_BOT_TOKEN or WEIXIN_ENABLED=true.")
         return 1
 
     log.info("ragtag_crew starting")
@@ -559,6 +572,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     if settings.dev_mode:
         _start_file_watcher()
 
+    if weixin_enabled and telegram_enabled:
+        log.info("starting Weixin frontend in background thread")
+        threading.Thread(target=_run_weixin_frontend, daemon=True).start()
+        return _run_telegram_frontend()
+    if weixin_enabled:
+        return _run_weixin_frontend()
     return _run_telegram_frontend()
 
 

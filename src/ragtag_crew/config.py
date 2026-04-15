@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     telegram_restart_backoff_max: int = 60
     telegram_health_stale_seconds: int = 120
 
+    # Weixin Bot
+    weixin_enabled: bool = False
+    weixin_allowed_user_ids: str = ""
+    weixin_credentials_path: str = "~/.weixin-bot/credentials.json"
+
     # LLM
     default_model: str = "openai/GLM-5.1"
     available_models: str = "openai/GLM-5.1,openai/GLM-5-Turbo"
@@ -43,6 +48,7 @@ class Settings(BaseSettings):
     memory_index_file: str = "MEMORY.md"
     memory_dir: str = "memory"
     session_storage_dir: str = "data/sessions"
+    session_routes_file: str = "data/session_routes.json"
     session_ttl_hours: int = 72
     session_summary_trigger_messages: int = 18
     session_summary_recent_messages: int = 12
@@ -141,6 +147,15 @@ class Settings(BaseSettings):
         if not self.available_models.strip():
             return []
         return [m.strip() for m in self.available_models.split(",") if m.strip()]
+
+    def get_weixin_allowed_user_ids(self) -> set[str]:
+        if not self.weixin_allowed_user_ids.strip():
+            return set()
+        return {
+            user_id.strip()
+            for user_id in self.weixin_allowed_user_ids.split(",")
+            if user_id.strip()
+        }
 
     def get_workspace_script_extensions(self) -> set[str]:
         if not self.workspace_script_extensions.strip():

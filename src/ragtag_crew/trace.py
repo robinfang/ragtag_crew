@@ -39,15 +39,15 @@ class TraceCollector:
 
     Usage::
 
-        collector = TraceCollector(chat_id=12345)
+        collector = TraceCollector(session_key=12345)
         session.subscribe(collector.on_event)
         await session.prompt(text)
         collector.finalize()
         session.unsubscribe(collector.on_event)
     """
 
-    def __init__(self, chat_id: int | None = None) -> None:
-        self.chat_id = chat_id
+    def __init__(self, session_key: int | str | None = None) -> None:
+        self.session_key = None if session_key is None else str(session_key)
         self.trace_id = uuid.uuid4().hex[:12]
         self._start_time = time.monotonic()
         self._turn_start: float | None = None
@@ -156,7 +156,7 @@ class TraceCollector:
         return {
             "trace_id": self.trace_id,
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "chat_id": self.chat_id,
+            "session_key": self.session_key,
             "model": self.model,
             "tool_preset": self.tool_preset,
             "enabled_skills": self.enabled_skills,

@@ -44,12 +44,21 @@ from ragtag_crew.memory_store import (
 )
 from ragtag_crew.model_validation import validate_model
 from ragtag_crew.prompts import DEFAULT_SYSTEM_PROMPT
+from ragtag_crew.session_routes import (
+    SessionRoute,
+    detect_session_source,
+    get_session_route,
+    reset_session_route,
+    set_session_route,
+)
+from ragtag_crew.session_store import SessionKey
 from ragtag_crew.skill_loader import get_skill, list_skills
 from ragtag_crew.telegram.stream import TelegramStreamer
 from ragtag_crew.trace import TraceCollector
 from ragtag_crew.session_store import (
     cleanup_expired_sessions,
     delete_session,
+    list_sessions,
     load_session,
     save_session,
 )
@@ -57,8 +66,8 @@ from ragtag_crew.tools import ensure_builtin_tools_registered, get_tools_for_pre
 
 log = logging.getLogger(__name__)
 
-# Session routing: chat_id -> AgentSession
-_sessions: dict[int, AgentSession] = {}
+# Session routing: session_key -> AgentSession
+_sessions: dict[SessionKey, AgentSession] = {}
 
 
 @dataclass(slots=True)
@@ -204,13 +213,27 @@ async def _post_stop(app: Application) -> None:
         pass
 
 
-def _get_session(chat_id: int) -> AgentSession:
-    if chat_id not in _sessions:
-        restored = load_session(chat_id, default_system_prompt=DEFAULT_SYSTEM_PROMPT)
+def _default_session_key(chat_id: int) -> int:
+    return chat_id
+
+
+def _current_route(chat_id: int) -> SessionRoute:
+    return get_session_route(
+        frontend="telegram",
+        peer_id=chat_id,
+        default_session_key=_default_session_key(chat_id),
+    )
+
+
+def _get_session_by_key(session_key: SessionKey) -> AgentSession:
+    if session_key not in _sessions:
+        restored = load_session(
+            session_key, default_system_prompt=DEFAULT_SYSTEM_PROMPT
+        )
         if restored is not None:
-            _sessions[chat_id] = restored
+            _sessions[session_key] = restored
         else:
-            _sessions[chat_id] = AgentSession(
+            _sessions[session_key] = AgentSession(
                 model=settings.default_model,
                 tools=get_tools_for_preset(settings.default_tool_preset),
                 system_prompt=DEFAULT_SYSTEM_PROMPT,
@@ -218,7 +241,19 @@ def _get_session(chat_id: int) -> AgentSession:
                 enabled_skills=[],
                 browser_mode=settings.browser_mode_default,
             )
-    return _sessions[chat_id]
+    return _sessions[session_key]
+
+
+def _get_session(chat_id: int) -> AgentSession:
+    return _get_session_by_key(_current_route(chat_id).current_session_key)
+
+
+def _save_current_session(chat_id: int, session: AgentSession) -> None:
+    save_session(_current_route(chat_id).current_session_key, session)
+
+
+def _delete_current_session(chat_id: int) -> None:
+    delete_session(_current_route(chat_id).current_session_key)
 
 
 def _is_progress_query(text: str) -> bool:
@@ -247,9 +282,12 @@ def _is_authorized(user_id: int) -> bool:
 # -- bot command menu --------------------------------------------------------
 
 _BOT_COMMANDS = [
+    BotCommand("help", "显示帮助"),
     BotCommand("new", "清空当前会话"),
     BotCommand("cancel", "取消当前回复"),
     BotCommand("plan", "规划模式 on / off"),
+    BotCommand("sessions", "列出最近 session"),
+    BotCommand("session", "查看 / 切换当前 session"),
     BotCommand("model", "查看 / 切换模型"),
     BotCommand("tools", "查看 / 切换工具预设"),
     BotCommand("skills", "列出可用技能"),
@@ -278,7 +316,76 @@ async def _cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         f"Model: {settings.default_model}\n"
         f"Tools: {settings.default_tool_preset}\n\n"
         "Send me a message to get started.\n"
-        "输入 / 查看所有可用命令。"
+        "输入 /help 查看常用命令，输入 / 查看所有可用命令。"
+    )
+
+
+async def _cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_authorized(update.effective_user.id):
+        log.warning("Unauthorized /help from user_id=%s", update.effective_user.id)
+        return
+    await update.message.reply_text(_help_text())
+
+
+async def _cmd_sessions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_authorized(update.effective_user.id):
+        log.warning("Unauthorized /sessions from user_id=%s", update.effective_user.id)
+        return
+    await update.message.reply_text(_format_saved_sessions())
+
+
+async def _cmd_session(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_authorized(update.effective_user.id):
+        log.warning("Unauthorized /session from user_id=%s", update.effective_user.id)
+        return
+
+    chat_id = update.effective_chat.id
+    route = _current_route(chat_id)
+    session = _get_session(chat_id)
+    args = context.args or []
+
+    if not args or args[0].lower() == "current":
+        await update.message.reply_text(_format_session_route(route))
+        return
+
+    action = args[0].lower()
+    if action == "use":
+        if len(args) < 2:
+            await update.message.reply_text("Usage: /session use <session_key>")
+            return
+        if session.is_busy:
+            await update.message.reply_text("Please wait — agent is busy.")
+            return
+        target_session_key = args[1]
+        route = set_session_route(
+            frontend="telegram",
+            peer_id=chat_id,
+            default_session_key=_default_session_key(chat_id),
+            session_key=target_session_key,
+        )
+        _get_session_by_key(route.current_session_key)
+        await update.message.reply_text(
+            "Switched session.\n\n" + _format_session_route(route)
+        )
+        return
+
+    if action == "reset":
+        if session.is_busy:
+            await update.message.reply_text("Please wait — agent is busy.")
+            return
+        route = reset_session_route(
+            frontend="telegram",
+            peer_id=chat_id,
+            default_session_key=_default_session_key(chat_id),
+        )
+        _get_session_by_key(route.current_session_key)
+        await update.message.reply_text(
+            "Session routing reset.\n\n" + _format_session_route(route)
+        )
+        return
+
+    await update.message.reply_text(
+        "Usage: /session current | /session use <session_key> | /session reset"
     )
 
 
@@ -313,6 +420,44 @@ def _context_status_text(session: AgentSession) -> str:
     )
 
 
+def _help_text() -> str:
+    return (
+        "可用命令:\n"
+        "/help - 显示帮助\n"
+        "/new - 清空当前绑定的会话\n"
+        "/cancel - 取消当前回复\n"
+        "/plan - 查看或切换规划模式\n"
+        "/sessions - 列出最近保存的 session\n"
+        "/session current - 查看当前绑定\n"
+        "/session use <session_key> - 切换到指定 session\n"
+        "/session reset - 恢复默认 session"
+    )
+
+
+def _format_session_route(route: SessionRoute) -> str:
+    mode = "overridden" if route.is_overridden else "default"
+    return (
+        f"Current session: {route.current_session_key}\n"
+        f"Default session: {route.default_session_key}\n"
+        f"Mode: {mode}"
+    )
+
+
+def _format_saved_sessions() -> str:
+    records = list_sessions()
+    if not records:
+        return "No saved sessions."
+
+    lines = ["Saved sessions:"]
+    for index, record in enumerate(records, start=1):
+        lines.append(
+            f"{index}. {record.session_key} | {detect_session_source(record.session_key)} | "
+            f"{record.model or '(unknown)'} | {record.tool_preset or '(unknown)'} | "
+            f"{_format_summary_time(record.last_active_at)}"
+        )
+    return "\n".join(lines)
+
+
 async def _cmd_new(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_authorized(update.effective_user.id):
         log.warning("Unauthorized /new from user_id=%s", update.effective_user.id)
@@ -323,7 +468,7 @@ async def _cmd_new(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Please wait — agent is busy.")
         return
     session.reset()
-    delete_session(chat_id)
+    _delete_current_session(chat_id)
     log.info("[chat %s] /new — session cleared", chat_id)
     await update.message.reply_text("Session cleared.")
 
@@ -362,14 +507,14 @@ async def _cmd_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     action = args[0].lower()
     if action == "on":
         session.planning_enabled = True
-        save_session(chat_id, session)
+        _save_current_session(chat_id, session)
         log.info("[chat %s] /plan on", chat_id)
         await update.message.reply_text(
             "Plan mode ON — will output numbered plan before acting on non-trivial tasks."
         )
     elif action == "off":
         session.planning_enabled = False
-        save_session(chat_id, session)
+        _save_current_session(chat_id, session)
         log.info("[chat %s] /plan off", chat_id)
         await update.message.reply_text(
             "Build mode ON — will proceed directly without planning."
@@ -416,7 +561,7 @@ async def _cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     session.model = new_model
-    save_session(chat_id, session)
+    _save_current_session(chat_id, session)
     log.info("[chat %s] /model %s -> %s", chat_id, previous_model, new_model)
     await update.message.reply_text(
         f"Model switched to: {new_model}\nValidation reply: {summary}"
@@ -453,7 +598,7 @@ async def _cmd_tools(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
     session.tools = new_tools
     session.tool_preset = preset
-    save_session(chat_id, session)
+    _save_current_session(chat_id, session)
     names = [t.name for t in new_tools]
     log.info("[chat %s] /tools -> %s", chat_id, preset)
     await update.message.reply_text(f"Tools switched to '{preset}': {', '.join(names)}")
@@ -504,7 +649,7 @@ async def _cmd_skill(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     action = args[0].lower()
     if action == "clear":
         session.enabled_skills = []
-        save_session(chat_id, session)
+        _save_current_session(chat_id, session)
         log.info("[chat %s] /skill clear", chat_id)
         await update.message.reply_text("Cleared all active skills.")
         return
@@ -526,7 +671,7 @@ async def _cmd_skill(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if action == "use":
         if skill.name not in session.enabled_skills:
             session.enabled_skills.append(skill.name)
-        save_session(chat_id, session)
+        _save_current_session(chat_id, session)
         log.info("[chat %s] /skill use %s", chat_id, skill.name)
         await update.message.reply_text(f"Enabled skill: {skill.name}")
         return
@@ -535,7 +680,7 @@ async def _cmd_skill(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         session.enabled_skills = [
             name for name in session.enabled_skills if name != skill.name
         ]
-        save_session(chat_id, session)
+        _save_current_session(chat_id, session)
         log.info("[chat %s] /skill drop %s", chat_id, skill.name)
         await update.message.reply_text(f"Disabled skill: {skill.name}")
         return
@@ -689,13 +834,13 @@ async def _cmd_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             await update.message.reply_text("Usage: /prompt set <text>")
             return
         session.session_prompt = text
-        save_session(chat_id, session)
+        _save_current_session(chat_id, session)
         await update.message.reply_text("Session prompt updated.")
         return
 
     if action == "clear":
         session.session_prompt = ""
-        save_session(chat_id, session)
+        _save_current_session(chat_id, session)
         await update.message.reply_text("Session prompt cleared.")
         return
 
@@ -705,13 +850,13 @@ async def _cmd_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             await update.message.reply_text("Usage: /prompt protect <text>")
             return
         session.protected_content = text
-        save_session(chat_id, session)
+        _save_current_session(chat_id, session)
         await update.message.reply_text("Protected content updated.")
         return
 
     if action == "unprotect":
         session.protected_content = ""
-        save_session(chat_id, session)
+        _save_current_session(chat_id, session)
         await update.message.reply_text("Protected content cleared.")
         return
 
@@ -740,7 +885,7 @@ async def _cmd_context(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             return
 
         changed = await session.compact(force=True)
-        save_session(chat_id, session)
+        _save_current_session(chat_id, session)
         if not changed:
             log.debug("[chat %s] /context compress — no change", chat_id)
             await update.message.reply_text(
@@ -935,7 +1080,7 @@ async def _cmd_browser(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             )
             return
         session.browser_mode = mode
-        save_session(chat_id, session)
+        _save_current_session(chat_id, session)
         log.info("[chat %s] /browser mode -> %s", chat_id, mode)
         await update.message.reply_text(
             f"Browser mode switched to: {mode}\n\n"
@@ -945,7 +1090,7 @@ async def _cmd_browser(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     if action == "confirm-attached":
         session.browser_attached_confirmed = True
-        save_session(chat_id, session)
+        _save_current_session(chat_id, session)
         log.info("[chat %s] /browser confirm-attached", chat_id)
         await update.message.reply_text(
             "Attached browser confirmed for this session.\n\n"
@@ -957,7 +1102,7 @@ async def _cmd_browser(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         session.browser_attached_confirmed = False
         if session.browser_mode == "attached":
             session.browser_mode = "isolated"
-        save_session(chat_id, session)
+        _save_current_session(chat_id, session)
         log.info("[chat %s] /browser revoke-attached", chat_id)
         await update.message.reply_text(
             "Attached browser confirmation revoked.\n\n"
@@ -1032,7 +1177,7 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     streamer = TelegramStreamer(placeholder)
     if app is not None:
         app.bot_data.setdefault("active_streamers", []).append(streamer)
-    collector = TraceCollector(chat_id=chat_id)
+    collector = TraceCollector(session_key=chat_id)
     collector.set_context(
         model=session.model,
         user_input=text,
@@ -1055,7 +1200,7 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             pass
     finally:
         collector.finalize()
-        save_session(chat_id, session)
+        _save_current_session(chat_id, session)
         await streamer.finalize()
         if app is not None:
             streamers = app.bot_data.get("active_streamers", [])
@@ -1105,9 +1250,12 @@ def build_app() -> Application:
     app.bot_data["active_streamers"] = []
 
     app.add_handler(CommandHandler("start", _cmd_start))
+    app.add_handler(CommandHandler("help", _cmd_help))
     app.add_handler(CommandHandler("new", _cmd_new))
     app.add_handler(CommandHandler("cancel", _cmd_cancel))
     app.add_handler(CommandHandler("plan", _cmd_plan))
+    app.add_handler(CommandHandler("sessions", _cmd_sessions))
+    app.add_handler(CommandHandler("session", _cmd_session))
     app.add_handler(CommandHandler("model", _cmd_model))
     app.add_handler(CommandHandler("tools", _cmd_tools))
     app.add_handler(CommandHandler("skills", _cmd_skills))

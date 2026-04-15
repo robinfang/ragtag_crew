@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "python-telegram-bot>=21.0",
+    "weixin-bot-sdk>=0.1.7",
     "litellm>=1.60.0",
     "mcp>=1.17.0",
     "pydantic-settings>=2.0",
@@ -21,6 +22,9 @@ ragtag-crew = "ragtag_crew.main:main"
 
 [dependency-groups]
 dev = ["pytest>=8.0"]
+
+[tool.uv.sources]
+weixin-bot-sdk = { path = "../weixin-bot/python", editable = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ragtag_crew"]

@@ -79,7 +79,112 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(update.message.reply_calls), 1)
         reply = update.message.reply_calls[0]["text"]
         self.assertIn("Hello", reply)
+        self.assertIn("输入 /help 查看常用命令", reply)
         self.assertIn("输入 / 查看所有可用命令", reply)
+
+    async def test_cmd_help_replies_with_session_commands(self) -> None:
+        update = FakeUpdate()
+
+        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True):
+            await bot_module._cmd_help(update, FakeContext())
+
+        reply = update.message.reply_calls[0]["text"]
+        self.assertIn("/help", reply)
+        self.assertIn("/sessions", reply)
+        self.assertIn("/session use <session_key>", reply)
+
+    async def test_cmd_sessions_renders_saved_sessions(self) -> None:
+        update = FakeUpdate()
+
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch(
+                "ragtag_crew.telegram.bot._format_saved_sessions",
+                return_value="Saved sessions:\n1. 100 | telegram",
+            ),
+        ):
+            await bot_module._cmd_sessions(update, FakeContext())
+
+        self.assertIn("Saved sessions", update.message.reply_calls[0]["text"])
+
+    async def test_cmd_session_current_shows_route(self) -> None:
+        update = FakeUpdate(chat_id=100)
+        route = bot_module.SessionRoute(
+            peer_key="telegram:100",
+            current_session_key="weixin:abc",
+            default_session_key=100,
+            is_overridden=True,
+        )
+
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch("ragtag_crew.telegram.bot._current_route", return_value=route),
+            patch(
+                "ragtag_crew.telegram.bot._get_session",
+                return_value=SimpleNamespace(is_busy=False),
+            ),
+        ):
+            await bot_module._cmd_session(update, FakeContext(["current"]))
+
+        reply = update.message.reply_calls[0]["text"]
+        self.assertIn("Current session: weixin:abc", reply)
+        self.assertIn("Mode: overridden", reply)
+
+    async def test_cmd_session_use_switches_route(self) -> None:
+        update = FakeUpdate(chat_id=100)
+        route = bot_module.SessionRoute(
+            peer_key="telegram:100",
+            current_session_key="weixin:abc",
+            default_session_key=100,
+            is_overridden=True,
+        )
+
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch(
+                "ragtag_crew.telegram.bot._get_session",
+                return_value=SimpleNamespace(is_busy=False),
+            ),
+            patch(
+                "ragtag_crew.telegram.bot.set_session_route", return_value=route
+            ) as set_route,
+            patch("ragtag_crew.telegram.bot._get_session_by_key") as get_by_key,
+        ):
+            await bot_module._cmd_session(update, FakeContext(["use", "weixin:abc"]))
+
+        set_route.assert_called_once_with(
+            frontend="telegram",
+            peer_id=100,
+            default_session_key=100,
+            session_key="weixin:abc",
+        )
+        get_by_key.assert_called_once_with("weixin:abc")
+        self.assertIn("Switched session.", update.message.reply_calls[0]["text"])
+
+    async def test_cmd_session_reset_rejects_busy_session(self) -> None:
+        update = FakeUpdate(chat_id=100)
+        route = bot_module.SessionRoute(
+            peer_key="telegram:100",
+            current_session_key="weixin:abc",
+            default_session_key=100,
+            is_overridden=True,
+        )
+
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch("ragtag_crew.telegram.bot._current_route", return_value=route),
+            patch(
+                "ragtag_crew.telegram.bot._get_session",
+                return_value=SimpleNamespace(is_busy=True),
+            ),
+            patch("ragtag_crew.telegram.bot.reset_session_route") as reset_route,
+        ):
+            await bot_module._cmd_session(update, FakeContext(["reset"]))
+
+        reset_route.assert_not_called()
+        self.assertEqual(
+            update.message.reply_calls[0]["text"], "Please wait — agent is busy."
+        )
 
     async def test_cmd_start_ignores_unauthorized_user(self) -> None:
         update = FakeUpdate(user_id=99)
@@ -1088,6 +1193,39 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         save_session.assert_called_once_with(100, session)
         self.assertEqual(update.message.reply_calls[0]["text"], "Thinking...")
 
+    async def test_handle_message_persists_routed_session_key(self) -> None:
+        placeholder = FakeSentMessage()
+        update = FakeUpdate(chat_id=100, text="hello", placeholder=placeholder)
+        session = SimpleNamespace(
+            is_busy=False,
+            model="openai/GLM-5.1",
+            tool_preset="coding",
+            enabled_skills=[],
+            planning_enabled=True,
+            prompt=AsyncMock(),
+            subscribe=lambda cb: None,
+            unsubscribe=lambda cb: None,
+        )
+        route = bot_module.SessionRoute(
+            peer_key="telegram:100",
+            current_session_key="weixin:abc",
+            default_session_key=100,
+            is_overridden=True,
+        )
+        bot_module._sessions["weixin:abc"] = session
+        streamer = SimpleNamespace(on_event=object(), finalize=AsyncMock())
+
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch("ragtag_crew.telegram.bot._current_route", return_value=route),
+            patch("ragtag_crew.telegram.bot.TelegramStreamer", return_value=streamer),
+            patch("ragtag_crew.telegram.bot.save_session") as save_session,
+            patch("ragtag_crew.telegram.bot.log"),
+        ):
+            await bot_module._handle_message(update, FakeContext())
+
+        save_session.assert_called_once_with("weixin:abc", session)
+
     async def test_handle_message_error_updates_placeholder_and_still_persists(
         self,
     ) -> None:
@@ -1220,7 +1358,7 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
 
         cleanup.assert_called_once()
         init_external.assert_called_once()
-        self.assertEqual(len(added_handlers), 15)
+        self.assertEqual(len(added_handlers), 18)
         self.assertEqual(len(added_error_handlers), 1)
         self.assertEqual(len(request_instances), 1)
         self.assertEqual(len(get_updates_request_instances), 1)
@@ -1249,9 +1387,12 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
     def test_bot_commands_match_handlers(self) -> None:
         handler_commands = [
             "start",
+            "help",
             "new",
             "cancel",
             "plan",
+            "sessions",
+            "session",
             "model",
             "tools",
             "skills",

@@ -87,9 +87,11 @@ class MainCliTests(unittest.TestCase):
         stdout = io.StringIO()
         with (
             patch.object(main_module.settings, "telegram_bot_token", ""),
+            patch.object(main_module.settings, "weixin_enabled", False),
             patch.object(main_module.settings, "default_model", "test-model"),
             patch.object(main_module.settings, "default_tool_preset", "coding"),
             patch.object(main_module.settings, "allowed_user_ids", ""),
+            patch.object(main_module.settings, "weixin_allowed_user_ids", ""),
             redirect_stdout(stdout),
         ):
             rc = main_module.main(["--check"])
@@ -97,15 +99,17 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(rc, 1)
         output = stdout.getvalue()
         self.assertIn("FAIL", output)
-        self.assertIn("<empty>", output)
+        self.assertIn("<empty token>", output)
 
     def test_check_passes_with_token(self) -> None:
         stdout = io.StringIO()
         with (
             patch.object(main_module.settings, "telegram_bot_token", "fake-token"),
+            patch.object(main_module.settings, "weixin_enabled", False),
             patch.object(main_module.settings, "default_model", "openai/gpt-4"),
             patch.object(main_module.settings, "default_tool_preset", "coding"),
             patch.object(main_module.settings, "allowed_user_ids", "42"),
+            patch.object(main_module.settings, "weixin_allowed_user_ids", ""),
             redirect_stdout(stdout),
         ):
             rc = main_module.main(["--check"])
@@ -113,7 +117,7 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         output = stdout.getvalue()
         self.assertIn("OK", output)
-        self.assertIn("set", output)
+        self.assertIn("enabled", output)
         self.assertIn("1 user(s)", output)
         self.assertIn("openai/gpt-4", output)
 
@@ -121,9 +125,11 @@ class MainCliTests(unittest.TestCase):
         stdout = io.StringIO()
         with (
             patch.object(main_module.settings, "telegram_bot_token", "fake-token"),
+            patch.object(main_module.settings, "weixin_enabled", False),
             patch.object(main_module.settings, "default_model", "test-model"),
             patch.object(main_module.settings, "default_tool_preset", "coding"),
             patch.object(main_module.settings, "allowed_user_ids", "42,abc,, "),
+            patch.object(main_module.settings, "weixin_allowed_user_ids", ""),
             redirect_stdout(stdout),
         ):
             rc = main_module.main(["--check"])
@@ -132,6 +138,24 @@ class MainCliTests(unittest.TestCase):
         output = stdout.getvalue()
         self.assertIn("1 user(s)", output)
         self.assertIn("OK", output)
+
+    def test_check_passes_with_weixin_only(self) -> None:
+        stdout = io.StringIO()
+        with (
+            patch.object(main_module.settings, "telegram_bot_token", ""),
+            patch.object(main_module.settings, "weixin_enabled", True),
+            patch.object(main_module.settings, "default_model", "test-model"),
+            patch.object(main_module.settings, "default_tool_preset", "coding"),
+            patch.object(main_module.settings, "allowed_user_ids", ""),
+            patch.object(main_module.settings, "weixin_allowed_user_ids", "wx-1,wx-2"),
+            redirect_stdout(stdout),
+        ):
+            rc = main_module.main(["--check"])
+
+        self.assertEqual(rc, 0)
+        output = stdout.getvalue()
+        self.assertIn("weixin      : enabled", output)
+        self.assertIn("wx ids      : 2 user(s)", output)
 
     def test_cli_override_working_dir(self) -> None:
         original = main_module.settings.working_dir
@@ -222,7 +246,9 @@ class MainCliTests(unittest.TestCase):
         stdout = io.StringIO()
         with patch(
             "ragtag_crew.main._show_history_list",
-            side_effect=lambda: print("Saved sessions:\n\n- chat_id=100", file=stdout),
+            side_effect=lambda: print(
+                "Saved sessions:\n\n- session_key=100", file=stdout
+            ),
         ):
             rc = main_module.main(["--history-list"])
 
@@ -233,15 +259,15 @@ class MainCliTests(unittest.TestCase):
         stdout = io.StringIO()
         with patch(
             "ragtag_crew.main._show_history",
-            side_effect=lambda chat_id: print(
-                f"Session {chat_id}\n\nsession_summary: hi", file=stdout
+            side_effect=lambda session_key: print(
+                f"Session {session_key}\n\nsession_summary: hi", file=stdout
             ),
         ):
-            rc = main_module.main(["--history", "123"])
+            rc = main_module.main(["--history", "weixin:abc"])
 
         self.assertEqual(rc, 0)
         out = stdout.getvalue()
-        self.assertIn("Session 123", out)
+        self.assertIn("Session weixin:abc", out)
         self.assertIn("session_summary: hi", out)
 
     def test_run_telegram_frontend_stops_on_keyboard_interrupt(self) -> None:
@@ -281,6 +307,51 @@ class MainCliTests(unittest.TestCase):
             calls, [{"drop_pending_updates": True, "bootstrap_retries": -1}]
         )
         sleep.assert_called_once_with(2)
+
+    def test_main_runs_weixin_only_frontend(self) -> None:
+        with (
+            patch.object(main_module.settings, "telegram_bot_token", ""),
+            patch.object(main_module.settings, "weixin_enabled", True),
+            patch.object(main_module.settings, "default_model", "m"),
+            patch.object(main_module.settings, "default_tool_preset", "coding"),
+            patch.object(main_module.settings, "working_dir", "."),
+            patch("ragtag_crew.main._setup_logging"),
+            patch(
+                "ragtag_crew.main._run_weixin_frontend", return_value=7
+            ) as run_weixin,
+            patch("ragtag_crew.main._run_telegram_frontend") as run_telegram,
+            patch("ragtag_crew.tools.bin_resolver.resolve_binary", return_value="rg"),
+        ):
+            rc = main_module.main([])
+
+        self.assertEqual(rc, 7)
+        run_weixin.assert_called_once_with()
+        run_telegram.assert_not_called()
+
+    def test_main_runs_both_frontends(self) -> None:
+        fake_thread = SimpleNamespace(start=lambda: None)
+        with (
+            patch.object(main_module.settings, "telegram_bot_token", "fake-token"),
+            patch.object(main_module.settings, "weixin_enabled", True),
+            patch.object(main_module.settings, "default_model", "m"),
+            patch.object(main_module.settings, "default_tool_preset", "coding"),
+            patch.object(main_module.settings, "working_dir", "."),
+            patch("ragtag_crew.main._setup_logging"),
+            patch(
+                "ragtag_crew.main._run_telegram_frontend", return_value=3
+            ) as run_telegram,
+            patch("ragtag_crew.main._run_weixin_frontend") as run_weixin,
+            patch(
+                "ragtag_crew.main.threading.Thread", return_value=fake_thread
+            ) as thread_ctor,
+            patch("ragtag_crew.tools.bin_resolver.resolve_binary", return_value="rg"),
+        ):
+            rc = main_module.main([])
+
+        self.assertEqual(rc, 3)
+        thread_ctor.assert_called_once()
+        run_weixin.assert_not_called()
+        run_telegram.assert_called_once_with()
 
 
 class MainReplTests(unittest.IsolatedAsyncioTestCase):

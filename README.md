@@ -4,11 +4,11 @@
 >
 > This project is developed independently by the author and is not related to any institutional research project.
 
-> OpenClaw 平替。参考 [Pi](https://pi.dev/) 一类 coding agent 的设计思路，用更轻量、更可控的方式，把本地 AI agent 接到 Telegram。
+> OpenClaw 平替。参考 [Pi](https://pi.dev/) 一类 coding agent 的设计思路，用更轻量、更可控的方式，把本地 AI agent 接到 Telegram / 微信。
 
 ## 当前定位
 
-- 正式接入渠道：Telegram（生产）和 REPL 终端（开发/调试）
+- 正式接入渠道：Telegram、微信和 REPL 终端（开发/调试）
 - Agent 跑在你自己的机器上，模型调用走你自己的 API key
 - 用 Python 自建 agent loop，不依赖第三方 agent SDK
 - 后续可以再扩展 Web、Discord 等入口，但现在不提前做多前端抽象
@@ -22,13 +22,14 @@
 - 工作目录级 workspace 管理：每个 `working_dir` 下维护独立的 `.ragtag_crew/workspaces/`，默认搜索会隐藏该目录，但可通过专用 workspace 工具稳定复用脚本与临时产物
 - 新脚本根目录保护：新建脚本如果目标位于 `working_dir` 根目录，会被视为歧义路径并拒绝直接 `write`；应明确写入项目子目录，或使用 `write_script` 写入 managed script workspace
 - Telegram 流式输出、HTML 富文本渲染、消息编辑节流、单用户鉴权已接通
+- 微信首版已接通最小可用链路：普通对话、忙碌时进度查询、`/new`、`/cancel`、`/plan`
 - 已支持运行时进度快照：忙碌时可识别进度询问并返回当前 turn、工具执行数、最近响应预览
 - 已支持 `/cancel` 显式确认反馈，取消与超时在运行时语义上分离
 - Telegram 表格渲染已做基础适配：Markdown 风格表格会自动转成等宽代码块，避免消息中表格错位
 - 完善的命令级日志记录：状态变更 INFO、权限/失败 WARNING、只读查询 DEBUG
 - REPL 终端模式已支持实时流式输出、执行轨迹收集、会话持久化和 /plan 命令
 - `prompts.py` 提取了共用的 `DEFAULT_SYSTEM_PROMPT`，Telegram 与 REPL 共享同一套系统提示词
-- `session_store.py` 已从 `telegram/` 提升到包根目录，REPL 和 Telegram 共用同一套持久化逻辑
+- `session_store.py` 已从 `telegram/` 提升到包根目录，Telegram、微信和 REPL 共用同一套持久化逻辑
 - 已支持仓库内本地 Markdown skill 的会话级启用，并改为“名称 + 摘要 + 路径”的轻量注入；完整内容按需读取
 - 已接入 `PROJECT.md` / `USER.local.md` / `MEMORY.md` 分层上下文
 - 已支持 `/prompt` 会话级临时规则，以及独立的 Protected Content 注入层，用于放置不应被普通会话压缩影响的规则
@@ -54,7 +55,7 @@
 uv run ragtag-crew -h
 uv sync
 cp .env.example .env
-# 编辑 .env，填入 TELEGRAM_BOT_TOKEN、ALLOWED_USER_IDS 和至少一个模型 API Key
+# 编辑 .env，至少启用一个前端（`TELEGRAM_BOT_TOKEN` 或 `WEIXIN_ENABLED=true`），并填入至少一个模型 API Key
 
 uv run ragtag-crew
 # 或
@@ -70,7 +71,7 @@ uv run python -m ragtag_crew.main
 - 用 `/memory promote [target]` 把 `inbox.md` 中待整理条目并入 `MEMORY.md` 或指定记忆文件
 - 用 `/context` 查看当前会话摘要状态，必要时用 `/context compress` 手动收口
 - 用 `/prompt set <text>` 设置当前会话临时规则，用 `/prompt protect <text>` 写入受保护内容
-- 可用 `ragtag-crew --history-list` 列出已保存会话，用 `ragtag-crew --history <chat_id>` 查看会话摘要与最近消息
+- 可用 `ragtag-crew --history-list` 列出已保存会话，用 `ragtag-crew --history <session_key>` 查看会话摘要与最近消息
 - 会话忙碌时直接问“进度”“进展”“好了没”等，机器人会返回实时快照
 - 用 `/cancel` 中止当前任务，机器人会立即确认已发送取消信号
 - 如需保存可复用脚本或临时工作区，优先使用 `write_script`、`create_workspace`、`list_workspaces` 等 workspace 工具；普通 `find/grep/ls` 默认不会把 `.ragtag_crew/` 混入项目浏览结果
@@ -100,7 +101,7 @@ ragtag_crew/
 │       ├── llm.py                # litellm 封装
 │       ├── context_builder.py    # system prompt 分层组装
 │       ├── session_summary.py    # 会话压缩与摘要
-│       ├── session_store.py      # 会话持久化（Telegram 与 REPL 共用）
+│       ├── session_store.py      # 会话持久化（Telegram / 微信 / REPL 共用）
 │       ├── prompts.py            # 共用系统提示词常量
 │       ├── repl_streamer.py      # REPL 实时流式输出
 │       ├── trace.py              # 执行轨迹收集
@@ -110,6 +111,8 @@ ragtag_crew/
 │       │   ├── bot.py            # Telegram 接入层
 │       │   ├── html.py           # Telegram HTML 渲染
 │       │   └── stream.py         # 流式输出与消息编辑
+│       ├── weixin/
+│       │   └── bot.py            # 微信接入层（最小可用版）
 │       ├── external/
 │       │   ├── manager.py        # 外部能力初始化编排
 │       │   ├── mcp_client.py     # MCP 发现与调用
@@ -140,7 +143,7 @@ ragtag_crew/
 
 - `ragtag_crew` 是产品名，也是 Python 包名
 - `src/` 只是源码容器目录；真正的包在 `src/ragtag_crew/`
-- `telegram/` 明确表示这是当前唯一前端，而不是整个项目名
+- `telegram/` 和 `weixin/` 是各自独立的接入层；当前仍按最小改动原则分别实现，而不是提前抽象成统一前端框架
 
 ## 相关文档
 

@@ -1,4 +1,4 @@
-"""JSON-backed session persistence for Telegram chats."""
+"""JSON-backed session persistence for Telegram、微信和 REPL 会话。"""
 
 from __future__ import annotations
 
@@ -7,8 +7,10 @@ import logging
 import os
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import quote
 
 from ragtag_crew.agent import AgentSession
 from ragtag_crew.config import settings
@@ -16,10 +18,12 @@ from ragtag_crew.tools import get_tools_for_preset
 
 log = logging.getLogger(__name__)
 
+SessionKey = int | str
+
 
 @dataclass(frozen=True)
 class SessionRecord:
-    chat_id: int
+    session_key: str
     path: Path
     last_active_at: float
     model: str
@@ -32,8 +36,29 @@ def _storage_dir() -> Path:
     return path
 
 
-def _session_path(chat_id: int) -> Path:
-    return _storage_dir() / f"{chat_id}.json"
+def _normalize_session_key(session_key: SessionKey) -> str:
+    return str(session_key)
+
+
+def _session_path(session_key: SessionKey) -> Path:
+    normalized = _normalize_session_key(session_key)
+    return _storage_dir() / f"{quote(normalized, safe='')}.json"
+
+
+def _read_payload(path: Path, *, on_error: Callable[[Path], None]) -> dict | None:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        on_error(path)
+        return None
+
+
+def _payload_session_key(payload: dict, path: Path) -> str:
+    if "session_key" in payload:
+        return str(payload["session_key"])
+    if "chat_id" in payload:
+        return str(payload["chat_id"])
+    return path.stem
 
 
 def cleanup_expired_sessions() -> None:
@@ -42,10 +67,13 @@ def cleanup_expired_sessions() -> None:
     if ttl_seconds > 0:
         cutoff = time.time() - ttl_seconds
         for path in root.glob("*.json"):
-            try:
-                payload = json.loads(path.read_text(encoding="utf-8"))
-            except Exception:
-                log.warning("Skipping unreadable session file: %s", path)
+            payload = _read_payload(
+                path,
+                on_error=lambda unreadable_path: log.warning(
+                    "Skipping unreadable session file: %s", unreadable_path
+                ),
+            )
+            if payload is None:
                 continue
 
             if payload.get("last_active_at", 0) < cutoff:
@@ -58,41 +86,48 @@ def cleanup_expired_sessions() -> None:
 def list_sessions() -> list[SessionRecord]:
     records: list[SessionRecord] = []
     for path in sorted(_storage_dir().glob("*.json"), key=lambda item: item.name):
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-            chat_id = int(payload.get("chat_id", path.stem))
-        except Exception:
-            log.warning("Skipping unreadable session file: %s", path)
+        payload = _read_payload(
+            path,
+            on_error=lambda unreadable_path: log.warning(
+                "Skipping unreadable session file: %s", unreadable_path
+            ),
+        )
+        if payload is None:
             continue
         records.append(
             SessionRecord(
-                chat_id=chat_id,
+                session_key=_payload_session_key(payload, path),
                 path=path,
                 last_active_at=float(payload.get("last_active_at", 0)),
                 model=str(payload.get("model", "")),
                 tool_preset=str(payload.get("tool_preset", "")),
             )
         )
-    records.sort(key=lambda item: (-item.last_active_at, item.chat_id))
+    records.sort(key=lambda item: (-item.last_active_at, item.session_key))
     return records
 
 
-def read_session_payload(chat_id: int) -> dict:
-    path = _session_path(chat_id)
+def read_session_payload(session_key: SessionKey) -> dict:
+    path = _session_path(session_key)
     if not path.exists():
-        raise FileNotFoundError(f"Session not found: {chat_id}")
+        raise FileNotFoundError(f"Session not found: {session_key}")
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def load_session(chat_id: int, *, default_system_prompt: str) -> AgentSession | None:
-    path = _session_path(chat_id)
+def load_session(
+    session_key: SessionKey, *, default_system_prompt: str
+) -> AgentSession | None:
+    path = _session_path(session_key)
     if not path.exists():
         return None
 
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        log.warning("Skipping corrupt session file: %s", path)
+    payload = _read_payload(
+        path,
+        on_error=lambda corrupt_path: log.warning(
+            "Skipping corrupt session file: %s", corrupt_path
+        ),
+    )
+    if payload is None:
         return None
 
     ttl_seconds = max(settings.session_ttl_hours, 0) * 3600
@@ -127,10 +162,11 @@ def load_session(chat_id: int, *, default_system_prompt: str) -> AgentSession | 
     return session
 
 
-def save_session(chat_id: int, session: AgentSession) -> None:
+def save_session(session_key: SessionKey, session: AgentSession) -> None:
+    normalized_key = _normalize_session_key(session_key)
     payload = {
         "version": 1,
-        "chat_id": chat_id,
+        "session_key": normalized_key,
         "model": session.model,
         "tool_preset": session.tool_preset,
         "enabled_skills": session.enabled_skills,
@@ -147,7 +183,7 @@ def save_session(chat_id: int, session: AgentSession) -> None:
         "messages": session.messages,
         "last_active_at": time.time(),
     }
-    target = _session_path(chat_id)
+    target = _session_path(normalized_key)
     root = target.parent
     root.mkdir(parents=True, exist_ok=True)
 
@@ -168,5 +204,5 @@ def save_session(chat_id: int, session: AgentSession) -> None:
         raise
 
 
-def delete_session(chat_id: int) -> None:
-    _session_path(chat_id).unlink(missing_ok=True)
+def delete_session(session_key: SessionKey) -> None:
+    _session_path(session_key).unlink(missing_ok=True)

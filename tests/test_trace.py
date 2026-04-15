@@ -39,10 +39,11 @@ class TraceCollectorTests(unittest.IsolatedAsyncioTestCase):
         import tempfile
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("ragtag_crew.trace.settings.trace_enabled", True), patch(
-                "ragtag_crew.trace.settings.trace_dir", tmpdir
+            with (
+                patch("ragtag_crew.trace.settings.trace_enabled", True),
+                patch("ragtag_crew.trace.settings.trace_dir", tmpdir),
             ):
-                c = TraceCollector(chat_id=42)
+                c = TraceCollector(session_key=42)
                 c.set_context(
                     model="openai/GLM-5.1",
                     user_input="read the file",
@@ -56,11 +57,15 @@ class TraceCollectorTests(unittest.IsolatedAsyncioTestCase):
                 await c.on_event("message_end", content="let me read that")
                 await c.on_event(
                     "tool_execution_start",
-                    tool_call=ToolCall(id="c1", name="read", arguments={"file_path": "foo.py"}),
+                    tool_call=ToolCall(
+                        id="c1", name="read", arguments={"file_path": "foo.py"}
+                    ),
                 )
                 await c.on_event(
                     "tool_execution_end",
-                    tool_call=ToolCall(id="c1", name="read", arguments={"file_path": "foo.py"}),
+                    tool_call=ToolCall(
+                        id="c1", name="read", arguments={"file_path": "foo.py"}
+                    ),
                     result="line 1: hello",
                 )
                 await c.on_event("turn_end", turn=1)
@@ -73,7 +78,7 @@ class TraceCollectorTests(unittest.IsolatedAsyncioTestCase):
                 record = json.loads(lines[0])
 
                 self.assertEqual(record["trace_id"], c.trace_id)
-                self.assertEqual(record["chat_id"], 42)
+                self.assertEqual(record["session_key"], "42")
                 self.assertEqual(record["model"], "openai/GLM-5.1")
                 self.assertEqual(record["user_input"], "read the file")
                 self.assertEqual(record["tool_preset"], "coding")
@@ -98,8 +103,9 @@ class TraceCollectorTests(unittest.IsolatedAsyncioTestCase):
         import tempfile
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("ragtag_crew.trace.settings.trace_enabled", True), patch(
-                "ragtag_crew.trace.settings.trace_dir", tmpdir
+            with (
+                patch("ragtag_crew.trace.settings.trace_enabled", True),
+                patch("ragtag_crew.trace.settings.trace_dir", tmpdir),
             ):
                 c = TraceCollector()
                 await c.on_event("error", error=RuntimeError("boom"))
@@ -118,14 +124,15 @@ class TraceCollectorTests(unittest.IsolatedAsyncioTestCase):
         import tempfile
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("ragtag_crew.trace.settings.trace_enabled", True), patch(
-                "ragtag_crew.trace.settings.trace_dir", tmpdir
+            with (
+                patch("ragtag_crew.trace.settings.trace_enabled", True),
+                patch("ragtag_crew.trace.settings.trace_dir", tmpdir),
             ):
-                c1 = TraceCollector(chat_id=1)
+                c1 = TraceCollector(session_key=1)
                 c1.set_context(model="m1", user_input="first")
                 c1.finalize()
 
-                c2 = TraceCollector(chat_id=2)
+                c2 = TraceCollector(session_key=2)
                 c2.set_context(model="m2", user_input="second")
                 c2.finalize()
 
@@ -140,19 +147,24 @@ class TraceCollectorTests(unittest.IsolatedAsyncioTestCase):
         import tempfile
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("ragtag_crew.trace.settings.trace_enabled", True), patch(
-                "ragtag_crew.trace.settings.trace_dir", tmpdir
+            with (
+                patch("ragtag_crew.trace.settings.trace_enabled", True),
+                patch("ragtag_crew.trace.settings.trace_dir", tmpdir),
             ):
                 c = TraceCollector()
                 await c.on_event("turn_start", turn=1)
                 await c.on_event("message_end", content="")
                 await c.on_event(
                     "tool_execution_start",
-                    tool_call=ToolCall(id="c1", name="bash", arguments={"command": "rm -rf /"}),
+                    tool_call=ToolCall(
+                        id="c1", name="bash", arguments={"command": "rm -rf /"}
+                    ),
                 )
                 await c.on_event(
                     "tool_execution_end",
-                    tool_call=ToolCall(id="c1", name="bash", arguments={"command": "rm -rf /"}),
+                    tool_call=ToolCall(
+                        id="c1", name="bash", arguments={"command": "rm -rf /"}
+                    ),
                     result="ERROR: delete commands are blocked",
                 )
                 await c.on_event("turn_end", turn=1)
