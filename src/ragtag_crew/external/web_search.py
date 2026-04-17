@@ -32,6 +32,8 @@ def _build_search_request(query: str, num_results: int) -> request.Request:
 
     if provider == "serper":
         payload = {"q": query, "num": num_results}
+    elif provider == "tavily":
+        payload = {"query": query, "max_results": num_results}
     else:
         payload = {"query": query, "num_results": num_results}
 
@@ -56,7 +58,10 @@ def _normalize_search_results(payload: dict[str, Any]) -> list[SearchResult]:
     for item in items:
         title = clip_text(item.get("title") or item.get("name"))
         url = clip_text(item.get("link") or item.get("url"), limit=300)
-        snippet = clip_text(item.get("snippet") or item.get("description"), limit=360)
+        snippet = clip_text(
+            item.get("snippet") or item.get("description") or item.get("content"),
+            limit=360,
+        )
         if not url:
             continue
         results.append(SearchResult(title=title or url, url=url, snippet=snippet))

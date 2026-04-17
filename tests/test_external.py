@@ -190,6 +190,21 @@ class WebSearchTests(unittest.TestCase):
     def tearDown(self) -> None:
         _ALL_TOOLS.pop("web_search", None)
 
+    def test_build_tavily_request_uses_bearer_auth_and_max_results(self) -> None:
+        with (
+            temp_setting("web_search_provider", "tavily"),
+            temp_setting("web_search_api_url", "https://api.tavily.com/search"),
+            temp_setting("web_search_api_key", "tvly-test-key"),
+        ):
+            req = web_search_module._build_search_request("hello world", 3)
+
+        self.assertEqual(req.full_url, "https://api.tavily.com/search")
+        self.assertEqual(req.get_header("Authorization"), "Bearer tvly-test-key")
+        self.assertEqual(
+            json.loads(req.data.decode("utf-8")),
+            {"query": "hello world", "max_results": 3},
+        )
+
     def test_normalize_serper_results(self) -> None:
         with temp_setting("web_search_provider", "serper"):
             results = web_search_module._normalize_search_results(
@@ -206,6 +221,24 @@ class WebSearchTests(unittest.TestCase):
 
         self.assertEqual(results[0].title, "Example title")
         self.assertEqual(results[0].url, "https://example.com/a")
+
+    def test_normalize_tavily_results_uses_content_as_snippet(self) -> None:
+        with temp_setting("web_search_provider", "tavily"):
+            results = web_search_module._normalize_search_results(
+                {
+                    "results": [
+                        {
+                            "title": "Example title",
+                            "url": "https://example.com/a",
+                            "content": "Example content snippet",
+                        }
+                    ]
+                }
+            )
+
+        self.assertEqual(results[0].title, "Example title")
+        self.assertEqual(results[0].url, "https://example.com/a")
+        self.assertEqual(results[0].snippet, "Example content snippet")
 
     def test_register_web_search_tool_adds_tool_to_readonly_preset(self) -> None:
         with (
