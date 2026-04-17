@@ -22,16 +22,19 @@
 - 工作目录级 workspace 管理：每个 `working_dir` 下维护独立的 `.ragtag_crew/workspaces/`，默认搜索会隐藏该目录，但可通过专用 workspace 工具稳定复用脚本与临时产物
 - 新脚本根目录保护：新建脚本如果目标位于 `working_dir` 根目录，会被视为歧义路径并拒绝直接 `write`；应明确写入项目子目录，或使用 `write_script` 写入 managed script workspace
 - Telegram 流式输出、HTML 富文本渲染、消息编辑节流、单用户鉴权已接通
-- 微信首版已接通最小可用链路：普通对话、忙碌时进度查询、`/new`、`/cancel`、`/plan`
+- 微信首版已接通最小可用链路：普通对话、忙碌时进度查询、`/help`、`/new`、`/cancel`、`/plan`、`/sessions`、`/session`
+- 已支持 `session_routes`：当前聊天窗口可绑定到任意 `session_key`，Telegram / 微信可手动共享同一会话，但默认不自动互通
+- 已支持 `/sessions`、`/session current`、`/session use <session_key>`、`/session use <index>`、`/session reset`
 - 已支持运行时进度快照：忙碌时可识别进度询问并返回当前 turn、工具执行数、最近响应预览
 - 已支持 `/cancel` 显式确认反馈，取消与超时在运行时语义上分离
 - Telegram 表格渲染已做基础适配：Markdown 风格表格会自动转成等宽代码块，避免消息中表格错位
 - 完善的命令级日志记录：状态变更 INFO、权限/失败 WARNING、只读查询 DEBUG
 - REPL 终端模式已支持实时流式输出、执行轨迹收集、会话持久化和 /plan 命令
-- `prompts.py` 提取了共用的 `DEFAULT_SYSTEM_PROMPT`，Telegram 与 REPL 共享同一套系统提示词
+- `prompts.py` 提取了共用的 `DEFAULT_SYSTEM_PROMPT`，Telegram、微信与 REPL 共享同一套系统提示词
 - `session_store.py` 已从 `telegram/` 提升到包根目录，Telegram、微信和 REPL 共用同一套持久化逻辑
 - 已支持仓库内本地 Markdown skill 的会话级启用，并改为“名称 + 摘要 + 路径”的轻量注入；完整内容按需读取
 - 已接入 `PROJECT.md` / `USER.local.md` / `MEMORY.md` 分层上下文
+- 已新增 `Execution Principles` 注入层：运行时明确要求先确认歧义、最小改动、只改相关代码、用可验证结果收尾
 - 已支持 `/prompt` 会话级临时规则，以及独立的 Protected Content 注入层，用于放置不应被普通会话压缩影响的规则
 - 已新增 `Workspace Snapshot` 环境引导：自动注入受控目录树和关键配置文件摘要，降低冷启动探索成本
 - 已提供最小 `/memory` 闭环：追加到 `memory/inbox.md`、查看文件、搜索历史记忆、手动 promote 到长期层
@@ -39,10 +42,10 @@
 - 已支持压缩前记忆落盘评估版：可在会话压缩前把显式记忆意图的旧消息去重写入 `memory/inbox.md`（默认关闭）
 - 已支持最小 block 化 compression state：每次压缩会生成独立 compression block，并持久化到 session，用于更结构化地表示旧上下文
 - 已提供最小 `/context` 命令：查看当前摘要状态，并手动触发一次会话压缩
-- 已支持历史查询 CLI：可列出已保存会话，并查看指定 chat_id 的摘要与最近消息
+- 已支持历史查询 CLI：可列出已保存会话，并查看指定 `session_key` 的摘要与最近消息
 - 已建立阶段 1 外部能力接入层，支持平台工具、`MCP client`、固定 `OpenAPI provider`、`web_search`、`Everything` 与浏览器能力
 - MCP 发现和调用链路已补全超时保护；外部能力初始化支持日志化、部分成功保留与失败后自动重试
-- 已支持最小联网搜索 API 接入口，可按配置启用 `web_search`
+- 已支持最小联网搜索 API 接入口，可按配置启用 `web_search`，当前兼容 `serper` / `tavily`
 - Windows 下可启用 `Everything` 搜索适配器；可通过 `/mcp` 查看已配置 MCP 状态
 - 已支持固定 `OpenAPI provider` 接入，可为未来 search gateway 预留稳定工具入口；可通过 `/ext` 查看外部能力总状态
 - 已接入基于 `agent-browser` 的浏览器能力骨架，支持独立浏览器模式与当前 Chromium 浏览器接管模式
@@ -51,15 +54,27 @@
 
 ## 快速开始
 
-```bash
+PowerShell:
+
+```powershell
 uv run ragtag-crew -h
 uv sync
-cp .env.example .env
+Copy-Item .env.example .env
 # 编辑 .env，至少启用一个前端（`TELEGRAM_BOT_TOKEN` 或 `WEIXIN_ENABLED=true`），并填入至少一个模型 API Key
+# Windows 下如启用微信，建议把 WEIXIN_CREDENTIALS_PATH 写成 C:/Users/<username>/.weixin-bot/credentials.json
 
 uv run ragtag-crew
 # 或
 uv run python -m ragtag_crew.main
+```
+
+通用 shell:
+
+```bash
+uv run ragtag-crew -h
+uv sync
+cp .env.example .env
+uv run ragtag-crew
 ```
 
 可选：
@@ -71,13 +86,14 @@ uv run python -m ragtag_crew.main
 - 用 `/memory promote [target]` 把 `inbox.md` 中待整理条目并入 `MEMORY.md` 或指定记忆文件
 - 用 `/context` 查看当前会话摘要状态，必要时用 `/context compress` 手动收口
 - 用 `/prompt set <text>` 设置当前会话临时规则，用 `/prompt protect <text>` 写入受保护内容
+- 用 `/help` 查看常用命令；用 `/sessions` 列出最近会话；用 `/session current` 查看当前绑定；用 `/session use <session_key>` 或 `/session use <index>` 切换；用 `/session reset` 恢复默认绑定
 - 可用 `ragtag-crew --history-list` 列出已保存会话，用 `ragtag-crew --history <session_key>` 查看会话摘要与最近消息
 - 会话忙碌时直接问“进度”“进展”“好了没”等，机器人会返回实时快照
 - 用 `/cancel` 中止当前任务，机器人会立即确认已发送取消信号
 - 如需保存可复用脚本或临时工作区，优先使用 `write_script`、`create_workspace`、`list_workspaces` 等 workspace 工具；普通 `find/grep/ls` 默认不会把 `.ragtag_crew/` 混入项目浏览结果
 - 复制 `mcp_servers.example.json` 为 `mcp_servers.local.json` 后，可通过 `/mcp` 查看 MCP server 状态
 - 复制 `openapi_tools.example.json` 为 `openapi_tools.local.json` 后，可通过 `/ext` 查看固定 OpenAPI provider 状态
-- 配置 `WEB_SEARCH_*` 后，可把 `web_search` 挂到 `coding` / `readonly` 预设中
+- 配置 `WEB_SEARCH_*` 后，可把 `web_search` 挂到 `coding` / `readonly` 预设中；当前支持 `WEB_SEARCH_PROVIDER=serper` 或 `tavily`
 - 安装 `agent-browser` 并启用 `AGENT_BROWSER_*` / `BROWSER_*` 配置后，可通过 `/browser` 和 `/ext` 管理浏览器能力
 - 如需限制浏览器能力范围，可配置 `BROWSER_ALLOWED_DOMAINS`；attached 模式默认要求先执行 `/browser confirm-attached`
 - 当前浏览器接管支持两条路径：`BROWSER_ATTACHED_CDP_URL`（手动 CDP，较稳）和 `BROWSER_ATTACHED_AUTO_CONNECT=true`（自动发现，较省事）
@@ -88,6 +104,14 @@ uv run python -m ragtag_crew.main
 - agent 启用 skill 后，system prompt 只注入 skill 的名称、摘要和文件路径，不会把全文直接塞进 prompt
 - skill 摘要来自该 Markdown 文件里第一条非空、非标题行；`/skills` 展示的就是这条摘要
 - 如果模型需要完整说明，应通过 `read` 工具读取对应的 `skills/<name>.md`
+
+## 会话说明
+
+- 默认 session key：Telegram 使用当前聊天 ID；微信使用 `weixin:<user_id>`；REPL 使用 `0`
+- 默认情况下 Telegram、微信、REPL 的会话历史彼此独立，不自动互通
+- 使用 `/session use ...` 只是把“当前聊天窗口”绑定到另一个已存在的 session，不会自动合并身份
+- `/new` 会清空当前绑定的 session，但不会自动重置路由；如需恢复默认绑定，请执行 `/session reset`
+- `/session use 2` 的序号以 `/sessions` 当前展示顺序为准；如果参数本身就是完整 session key，则优先按完整 key 匹配
 
 ## 目录结构
 
@@ -102,6 +126,7 @@ ragtag_crew/
 │       ├── context_builder.py    # system prompt 分层组装
 │       ├── session_summary.py    # 会话压缩与摘要
 │       ├── session_store.py      # 会话持久化（Telegram / 微信 / REPL 共用）
+│       ├── session_routes.py     # 当前聊天窗口到 session 的绑定路由
 │       ├── prompts.py            # 共用系统提示词常量
 │       ├── repl_streamer.py      # REPL 实时流式输出
 │       ├── trace.py              # 执行轨迹收集
@@ -150,9 +175,10 @@ ragtag_crew/
 - `python-telegram-agent-proposal.md`：当前 Python 方案设计文档
 - `project-roadmap.md`：当前项目级路线图与阶段安排
 - `search-gateway-plan.md`：搜索内置层与独立 gateway 的专项设计
+- `docs/background-job-plan.md`：未来长任务后台任务化方案，聚焦 job、主动通知与可查询进度
+- `docs/web-frontend-plan.md`：未来 Web 第四前端接入方案，聚焦本机 Web 对话界面与前端编排
 - `archive/pi-sdk-validation/`：早期 Pi SDK 方向的验证记录，仅保留参考
 
 ## License
 
 Apache-2.0
-- `docs/background-job-plan.md`：未来长任务后台任务化方案，聚焦 job、主动通知与可查询进度
