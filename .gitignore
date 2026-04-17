@@ -15,6 +15,8 @@ memory/inbox.md
 mcp_servers.local.json
 openapi_tools.local.json
 data/browser/
+data/session_routes.json
 nul
 pi-telegram-agent/
 py-telegram-agent/
+~/
