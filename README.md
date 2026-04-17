@@ -155,3 +155,4 @@ ragtag_crew/
 ## License
 
 Apache-2.0
+- `docs/background-job-plan.md`：未来长任务后台任务化方案，聚焦 job、主动通知与可查询进度
