@@ -6,7 +6,7 @@
 
 更现实、也更适合当前阶段的目标是：
 
-> 先把它做成一个 **单用户、自部署、Telegram 优先、可扩展外部能力的本地 agent 产品**。
+> 先把它做成一个 **单用户、自部署、Telegram / 微信双入口、可扩展外部能力的本地 agent 产品**。
 
 这里的“可扩展外部能力”是接下来路线调整后的核心。
 
@@ -21,7 +21,7 @@
 
 当前项目已经具备一套可继续演进的核心底座：
 
-- Telegram 单入口已打通
+- Telegram 与微信入口已打通，REPL 作为开发/调试入口可用
 - 自建 `agent loop` 已可用
 - 本地工具系统已具备基础形态
 - 超时、会话持久化、流式输出已接入
@@ -38,6 +38,9 @@
 - 执行轨迹收集（TraceCollector，JSONL 格式，Telegram 与 REPL 均已接入）
 - Planning 机制（system prompt 注入规划协议，Telegram 与 REPL 均支持 /plan）
 - `/prompt` 与 Protected Content 已具备基础版
+- `session_routes` 已落地，支持“当前聊天窗口 -> session_key”绑定和跨端手动共享会话
+- `/help`、`/sessions`、`/session` 已接入 Telegram 与微信
+- `Execution Principles` 已注入运行时上下文，明确要求先确认歧义、优先最小改动并以验证收尾
 - 两阶段调用（`draft + verify`）已具备基础版，但默认仍关闭
 - 固定 OpenAPI 工具接入（paper-search + paper-collector）
 - 环境引导（Workspace Snapshot / env bootstrap）已落地

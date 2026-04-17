@@ -1,5 +1,9 @@
 # Python Telegram Agent 方案（路径 C：自建 Agent 引擎）
 
+> 注意：本文档是项目早期的 Telegram 单入口方案稿，保留用于记录最初的架构选择背景。
+> 当前实现已经扩展到 Telegram / 微信 / REPL 多入口，并引入 `session_key`、`session_routes`、运行时上下文分层等后续演进能力。
+> 因此本文档不应被视为当前实现说明，而应视为历史设计资料。
+
 > 纯 Python 实现，自建 agent loop + litellm 多模型 + python-telegram-bot 接入 Telegram
 > 创建时间：2026-04-03
 
