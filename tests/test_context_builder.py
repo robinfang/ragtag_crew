@@ -55,7 +55,11 @@ class ContextBuilderTests(unittest.TestCase):
             prompt.index("base system"), prompt.index("## Planning Protocol")
         )
         self.assertLess(
-            prompt.index("## Planning Protocol"), prompt.index("## Project Context")
+            prompt.index("## Planning Protocol"),
+            prompt.index("## Execution Principles"),
+        )
+        self.assertLess(
+            prompt.index("## Execution Principles"), prompt.index("## Project Context")
         )
         self.assertLess(
             prompt.index("## Project Context"), prompt.index("## Workspace Snapshot")
@@ -85,6 +89,10 @@ class ContextBuilderTests(unittest.TestCase):
         self.assertLess(
             prompt.index("## Session Prompt"), prompt.index("## Session Summary")
         )
+        self.assertIn("if the request is ambiguous", prompt)
+        self.assertIn("minimum correct change", prompt)
+        self.assertIn("surgical changes", prompt)
+        self.assertIn("verifiable outcomes", prompt)
         self.assertIn("never drop this", prompt)
         self.assertIn("older context", prompt)
 
@@ -95,6 +103,7 @@ class ContextBuilderTests(unittest.TestCase):
                 prompt = build_system_prompt(base_system_prompt="base system")
 
         self.assertTrue(prompt.startswith("base system"))
+        self.assertIn("## Execution Principles", prompt)
         self.assertIn("## External Result Policy", prompt)
 
     def test_planning_protocol_included_when_enabled(self) -> None:

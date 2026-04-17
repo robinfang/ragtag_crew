@@ -6,6 +6,7 @@ from pathlib import Path
 
 from ragtag_crew.config import settings
 from ragtag_crew.env_bootstrap import load_workspace_snapshot
+from ragtag_crew.prompts import EXECUTION_PRINCIPLES_PROMPT
 from ragtag_crew.skill_loader import render_skill_catalog_prompt
 
 
@@ -71,6 +72,8 @@ def build_system_prompt(
                 "For trivial tasks (single-file edit, quick lookup, direct question), proceed directly without a plan."
             ),
         )
+
+    _append_section(parts, "Execution Principles", EXECUTION_PRINCIPLES_PROMPT)
 
     _append_section(parts, "Project Context", load_project_context())
     _append_section(parts, "Workspace Snapshot", load_workspace_snapshot())
