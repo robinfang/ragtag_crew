@@ -453,6 +453,7 @@ class CodexRouteTests(unittest.IsolatedAsyncioTestCase):
             fake_session.calls[0][1]["json"]["input"][0],
             {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
         )
+        self.assertFalse(fake_session.calls[0][1]["json"]["store"])
         self.assertTrue(fake_session.session_kwargs["trust_env"])
 
     async def test_codex_route_adds_default_instructions_without_system(self) -> None:

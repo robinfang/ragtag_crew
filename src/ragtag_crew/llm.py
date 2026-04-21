@@ -236,6 +236,7 @@ async def _stream_codex_chat(
             "instructions": _build_codex_instructions(messages),
             "input": _build_codex_input(messages),
             "stream": True,
+            "store": False,
         }
         converted_tools = _build_codex_tools(tools)
         if converted_tools:
