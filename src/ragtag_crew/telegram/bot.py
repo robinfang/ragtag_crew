@@ -194,6 +194,13 @@ async def _post_stop(app: Application) -> None:
         if session.is_busy:
             session.abort()
 
+    prompt_tasks = list(app.bot_data.pop("active_prompt_tasks", set()))
+    if prompt_tasks:
+        results = await asyncio.gather(*prompt_tasks, return_exceptions=True)
+        for result in results:
+            if isinstance(result, Exception):
+                log.warning("Telegram prompt task stopped with error: %s", result)
+
     streamers = list(app.bot_data.pop("active_streamers", []))
     if streamers:
         results = await asyncio.gather(
@@ -561,6 +568,9 @@ async def _cmd_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
     elif action == "off":
         session.planning_enabled = False
+        clear_pending_plan = getattr(session, "clear_pending_plan", None)
+        if callable(clear_pending_plan):
+            clear_pending_plan()
         _save_current_session(chat_id, session)
         log.info("[chat %s] /plan off", chat_id)
         await update.message.reply_text(
@@ -1208,7 +1218,9 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if isinstance(health, TelegramRuntimeHealth):
         health.mark_message_activity()
 
-    session = _get_session(chat_id)
+    route = _current_route(chat_id)
+    session_key = route.current_session_key
+    session = _get_session_by_key(session_key)
     log.debug("[chat %s] prompt: %.80s", chat_id, text)
 
     if session.is_busy:
@@ -1224,7 +1236,7 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     streamer = TelegramStreamer(placeholder)
     if app is not None:
         app.bot_data.setdefault("active_streamers", []).append(streamer)
-    collector = TraceCollector(session_key=chat_id)
+    collector = TraceCollector(session_key=session_key)
     collector.set_context(
         model=session.model,
         user_input=text,
@@ -1235,26 +1247,36 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     session.subscribe(streamer.on_event)
     session.subscribe(collector.on_event)
 
-    try:
-        await session.prompt(text)
-    except UserAbortedError:
-        pass
-    except Exception as exc:
-        log.exception("prompt() failed")
+    async def _run_prompt() -> None:
         try:
-            await placeholder.edit_text(f"Error: {exc}")
-        except Exception:
+            await session.prompt(text)
+        except UserAbortedError:
             pass
-    finally:
-        collector.finalize()
-        _save_current_session(chat_id, session)
-        await streamer.finalize()
-        if app is not None:
-            streamers = app.bot_data.get("active_streamers", [])
-            if streamer in streamers:
-                streamers.remove(streamer)
-        session.unsubscribe(streamer.on_event)
-        session.unsubscribe(collector.on_event)
+        except Exception as exc:
+            log.exception("prompt() failed")
+            try:
+                await placeholder.edit_text(f"Error: {exc}")
+            except Exception:
+                pass
+        finally:
+            collector.finalize()
+            save_session(session_key, session)
+            await streamer.finalize()
+            if app is not None:
+                streamers = app.bot_data.get("active_streamers", [])
+                if streamer in streamers:
+                    streamers.remove(streamer)
+            session.unsubscribe(streamer.on_event)
+            session.unsubscribe(collector.on_event)
+
+    if app is None or not hasattr(app, "create_task"):
+        await _run_prompt()
+        return
+
+    task = app.create_task(_run_prompt(), name=f"ragtag_crew:telegram_prompt:{chat_id}")
+    active_prompt_tasks = app.bot_data.setdefault("active_prompt_tasks", set())
+    active_prompt_tasks.add(task)
+    task.add_done_callback(active_prompt_tasks.discard)
 
 
 # -- application builder ---------------------------------------------------
@@ -1295,6 +1317,7 @@ def build_app() -> Application:
     )
     app.bot_data["telegram_runtime_health"] = health
     app.bot_data["active_streamers"] = []
+    app.bot_data["active_prompt_tasks"] = set()
 
     app.add_handler(CommandHandler("start", _cmd_start))
     app.add_handler(CommandHandler("help", _cmd_help))

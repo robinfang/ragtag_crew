@@ -229,6 +229,11 @@ class MainCliTests(unittest.TestCase):
             main_module.settings.dev_mode = original_dev
             main_module.settings.log_level = original_log
 
+    def test_hidden_supervised_flag_is_parsed(self) -> None:
+        args = main_module.build_arg_parser().parse_args(["--_supervised"])
+
+        self.assertTrue(args._supervised)
+
     def test_cli_no_override_when_args_missing(self) -> None:
         original_wd = main_module.settings.working_dir
         original_model = main_module.settings.default_model
@@ -327,6 +332,46 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(rc, 7)
         run_weixin.assert_called_once_with()
         run_telegram.assert_not_called()
+
+    def test_main_dev_parent_runs_supervisor_only(self) -> None:
+        with (
+            patch.object(main_module.settings, "dev_mode", False),
+            patch.object(main_module.settings, "log_level", "INFO"),
+            patch("ragtag_crew.main._setup_logging"),
+            patch("ragtag_crew.main._dev_supervisor", return_value=9) as supervisor,
+            patch("ragtag_crew.main._run_weixin_frontend") as run_weixin,
+            patch("ragtag_crew.main._run_telegram_frontend") as run_telegram,
+        ):
+            rc = main_module.main(["--dev"])
+
+        self.assertEqual(rc, 9)
+        supervisor.assert_called_once_with()
+        run_weixin.assert_not_called()
+        run_telegram.assert_not_called()
+
+    def test_main_dev_supervised_child_skips_supervisor(self) -> None:
+        with (
+            patch.object(main_module.settings, "dev_mode", False),
+            patch.object(main_module.settings, "log_level", "INFO"),
+            patch.object(main_module.settings, "telegram_bot_token", "fake-token"),
+            patch.object(main_module.settings, "weixin_enabled", False),
+            patch.object(main_module.settings, "default_model", "m"),
+            patch.object(main_module.settings, "default_tool_preset", "coding"),
+            patch.object(main_module.settings, "working_dir", "."),
+            patch("ragtag_crew.main._setup_logging"),
+            patch("ragtag_crew.main._dev_supervisor") as supervisor,
+            patch(
+                "ragtag_crew.main._run_telegram_frontend", return_value=3
+            ) as run_telegram,
+            patch("ragtag_crew.main._run_weixin_frontend") as run_weixin,
+            patch("ragtag_crew.tools.bin_resolver.resolve_binary", return_value="rg"),
+        ):
+            rc = main_module.main(["--dev", "--_supervised"])
+
+        self.assertEqual(rc, 3)
+        supervisor.assert_not_called()
+        run_weixin.assert_not_called()
+        run_telegram.assert_called_once_with()
 
     def test_main_runs_both_frontends(self) -> None:
         fake_thread = SimpleNamespace(start=lambda: None)

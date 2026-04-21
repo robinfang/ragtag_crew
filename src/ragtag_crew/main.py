@@ -93,6 +93,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="列出已保存的会话历史",
     )
     parser.add_argument("--history", help="查看指定 session_key 的会话历史摘要")
+    parser.add_argument("--_supervised", action="store_true", help=argparse.SUPPRESS)
     return parser
 
 
@@ -267,30 +268,77 @@ def _apply_cli_overrides(args: argparse.Namespace) -> None:
 # -- file watcher for --dev mode ----------------------------------------------
 
 
-def _start_file_watcher() -> None:
-    """Watch src/ragtag_crew/**/*.py and restart the process on changes."""
-    import threading
+def _dev_supervisor() -> int:
+    """--dev 模式下由父进程监听代码变化并重启子进程。"""
+    import subprocess
     from watchfiles import watch
 
-    src_dir = Path(__file__).resolve().parent
-    watch_path = src_dir
+    watch_path = Path(__file__).resolve().parent
     if not watch_path.is_dir():
-        return
+        return 1
+
+    log = logging.getLogger(__name__)
+    stop_event = threading.Event()
+    restart_event = threading.Event()
 
     def _watch_loop() -> None:
-        logging.getLogger(__name__).info("[dev] watching %s for changes...", watch_path)
+        log.info("[dev] watching %s for changes...", watch_path)
         try:
-            for _changes in watch(watch_path, stop_event=threading.Event()):
-                logging.getLogger(__name__).info("[dev] file changed, restarting...")
-                os.execv(
-                    sys.executable,
-                    [sys.executable, "-m", "ragtag_crew.main"] + sys.argv[1:],
-                )
+            for _changes in watch(watch_path, stop_event=stop_event):
+                if stop_event.is_set():
+                    return
+                log.info("[dev] file changed, restarting child process...")
+                restart_event.set()
+                return
         except Exception:
-            pass
+            log.exception("[dev] file watcher crashed")
+            restart_event.set()
 
-    t = threading.Thread(target=_watch_loop, daemon=True)
-    t.start()
+    child_args = [
+        sys.executable,
+        "-m",
+        "ragtag_crew.main",
+        *sys.argv[1:],
+        "--_supervised",
+    ]
+
+    while True:
+        restart_event.clear()
+        watcher = threading.Thread(target=_watch_loop, daemon=True)
+        watcher.start()
+
+        log.info("[dev] starting child process...")
+        proc = subprocess.Popen(child_args)
+        try:
+            while proc.poll() is None:
+                if restart_event.wait(timeout=0.5):
+                    proc.terminate()
+                    break
+            try:
+                return_code = proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                log.warning("[dev] child process did not exit in time; killing it")
+                proc.kill()
+                return_code = proc.wait()
+        except KeyboardInterrupt:
+            stop_event.set()
+            log.info("[dev] supervisor interrupted; stopping child process...")
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                log.warning("[dev] child process did not exit in time; killing it")
+                proc.kill()
+                proc.wait()
+            return 0
+        finally:
+            stop_event.set()
+            watcher.join(timeout=1)
+            stop_event.clear()
+
+        if restart_event.is_set():
+            continue
+        return return_code
 
 
 # -- REPL mode ----------------------------------------------------------------
@@ -413,6 +461,9 @@ async def _repl_loop() -> None:
                 print("Plan mode ON — 输出编号计划后再执行。")
             elif action == "off":
                 session.planning_enabled = False
+                clear_pending_plan = getattr(session, "clear_pending_plan", None)
+                if callable(clear_pending_plan):
+                    clear_pending_plan()
                 _save_session(_REPL_SESSION_KEY, session)
                 print("Build mode ON — 直接执行，不输出计划。")
             else:
@@ -548,6 +599,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     log.info("ragtag_crew starting  pid=%s", os.getpid())
 
+    if settings.dev_mode and not args._supervised:
+        return _dev_supervisor()
+
     telegram_enabled = bool(settings.telegram_bot_token.strip())
     weixin_enabled = settings.weixin_enabled
     if not telegram_enabled and not weixin_enabled:
@@ -568,9 +622,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         log.error("ripgrep not available: %s", exc)
         log.error("grep/find tools will use Python fallback (slow).")
         log.error("Install ripgrep or ensure internet access for auto-download.")
-
-    if settings.dev_mode:
-        _start_file_watcher()
 
     if weixin_enabled and telegram_enabled:
         log.info("starting Weixin frontend in background thread")

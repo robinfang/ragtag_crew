@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -61,6 +62,41 @@ class FakeUpdate:
         self.effective_user = FakeUser(user_id)
         self.effective_chat = FakeChat(chat_id)
         self.message = FakeMessage(text=text, placeholder=placeholder)
+
+
+class BlockingSession:
+    def __init__(self) -> None:
+        self.is_busy = False
+        self.model = "openai/GLM-5.1"
+        self.tool_preset = "coding"
+        self.enabled_skills: list[str] = []
+        self.planning_enabled = True
+        self.prompt_calls: list[str] = []
+        self.abort_calls = 0
+        self.started = asyncio.Event()
+        self.released = asyncio.Event()
+        self._callbacks: list[object] = []
+
+    def subscribe(self, cb) -> None:  # type: ignore[no-untyped-def]
+        self._callbacks.append(cb)
+
+    def unsubscribe(self, cb) -> None:  # type: ignore[no-untyped-def]
+        if cb in self._callbacks:
+            self._callbacks.remove(cb)
+
+    def abort(self) -> None:
+        self.abort_calls += 1
+        self.released.set()
+
+    async def prompt(self, text: str) -> str:
+        self.prompt_calls.append(text)
+        self.is_busy = True
+        self.started.set()
+        try:
+            await self.released.wait()
+            raise bot_module.UserAbortedError()
+        finally:
+            self.is_busy = False
 
 
 class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
@@ -319,12 +355,22 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         bot_module._sessions[100] = session
         update = FakeUpdate(chat_id=100)
 
-        with patch("ragtag_crew.telegram.bot._is_authorized", return_value=True):
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch(
+                "ragtag_crew.config.Settings.get_available_models",
+                return_value=[
+                    "openai/GLM-5.1",
+                    "openai/GLM-5-Turbo",
+                    "openai/gpt-5.4",
+                ],
+            ),
+        ):
             await bot_module._cmd_model(update, FakeContext())
 
-        self.assertIn(
-            "Current model: openai/GLM-5.1", update.message.reply_calls[0]["text"]
-        )
+        reply = update.message.reply_calls[0]["text"]
+        self.assertIn("Current model: openai/GLM-5.1", reply)
+        self.assertIn("openai/gpt-5.4", reply)
 
     async def test_cmd_model_validation_failure_keeps_previous_model(self) -> None:
         session = SimpleNamespace(model="openai/GLM-5.1")
@@ -1282,6 +1328,53 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         save_session.assert_called_once_with(100, session)
         self.assertEqual(update.message.reply_calls[0]["text"], "Thinking...")
 
+    async def test_handle_message_runs_prompt_in_background_so_cancel_can_abort(
+        self,
+    ) -> None:
+        placeholder = FakeSentMessage()
+        update = FakeUpdate(chat_id=100, text="hello", placeholder=placeholder)
+        cancel_update = FakeUpdate(chat_id=100, text="/cancel")
+        session = BlockingSession()
+        bot_module._sessions[100] = session
+        streamer = SimpleNamespace(on_event=object(), finalize=AsyncMock())
+        collector = SimpleNamespace(
+            on_event=AsyncMock(),
+            finalize=unittest.mock.Mock(),
+            set_context=lambda **kwargs: None,
+        )
+        app = SimpleNamespace(
+            bot_data={"active_streamers": [], "active_prompt_tasks": set()},
+            create_task=lambda coro, name=None: asyncio.create_task(coro, name=name),
+        )
+
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch("ragtag_crew.telegram.bot.TelegramStreamer", return_value=streamer),
+            patch("ragtag_crew.telegram.bot.TraceCollector", return_value=collector),
+            patch("ragtag_crew.telegram.bot.save_session") as save_session,
+            patch("ragtag_crew.telegram.bot.log"),
+        ):
+            await bot_module._handle_message(update, FakeContext(application=app))
+            await asyncio.wait_for(session.started.wait(), timeout=1)
+
+            prompt_tasks = list(app.bot_data["active_prompt_tasks"])
+            self.assertEqual(len(prompt_tasks), 1)
+            self.assertEqual(app.bot_data["active_streamers"], [streamer])
+
+            await bot_module._cmd_cancel(cancel_update, FakeContext(application=app))
+            await asyncio.gather(*prompt_tasks)
+            await asyncio.sleep(0)
+
+        self.assertEqual(session.abort_calls, 1)
+        self.assertEqual(
+            cancel_update.message.reply_calls[0]["text"], "已发送取消信号。"
+        )
+        streamer.finalize.assert_awaited_once()
+        collector.finalize.assert_called_once_with()
+        save_session.assert_called_once_with(100, session)
+        self.assertEqual(app.bot_data["active_streamers"], [])
+        self.assertEqual(app.bot_data["active_prompt_tasks"], set())
+
     async def test_handle_message_persists_routed_session_key(self) -> None:
         placeholder = FakeSentMessage()
         update = FakeUpdate(chat_id=100, text="hello", placeholder=placeholder)
@@ -1453,6 +1546,7 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(get_updates_request_instances), 1)
         self.assertIsNotNone(app.bot_data.get("telegram_runtime_health"))
         self.assertEqual(app.bot_data.get("active_streamers"), [])
+        self.assertEqual(app.bot_data.get("active_prompt_tasks"), set())
         self.assertIsNotNone(app.post_init)
         self.assertIsNotNone(app.post_stop)
         self.assertFalse(request_instances[0]["httpx_kwargs"].get("trust_env", True))
