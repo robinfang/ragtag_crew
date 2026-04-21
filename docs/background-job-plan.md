@@ -1,5 +1,11 @@
 # 长任务后台任务化方案
 
+## 现状说明
+
+本文档仍主要面向 Telegram 侧的未来 job 化设计。
+
+截至当前仓库状态，微信前端已经先行落地了一个更轻量的后台执行版本：普通消息会转入进程内 `asyncio.Task` 后台运行，支持主动状态推送、进度查询和 `/cancel`。相关实现边界与设计取舍见 `docs/weixin-plan-mode-implementation-plan.md`。
+
 ## 背景
 
 当前 Telegram 长任务处理链路是前台同步执行：`src/ragtag_crew/telegram/bot.py` 在收到普通消息后直接 `await session.prompt(text)`。这意味着一次对话请求会同时承担以下职责：

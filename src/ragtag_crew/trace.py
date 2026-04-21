@@ -65,6 +65,8 @@ class TraceCollector:
         self.tool_preset: str = ""
         self.enabled_skills: list[str] = []
         self.planning_enabled: bool | None = None
+        self.awaiting_plan_confirmation_at_start: bool | None = None
+        self.prompt_phase: str = ""
         self.compaction_triggered = False
 
     def set_context(
@@ -89,10 +91,17 @@ class TraceCollector:
         match event_type:
             case "agent_start":
                 self._start_time = time.monotonic()
+                self.prompt_phase = str(kwargs.get("prompt_phase") or "")
+                awaiting = kwargs.get("awaiting_plan_confirmation_at_start")
+                if awaiting is not None:
+                    self.awaiting_plan_confirmation_at_start = bool(awaiting)
 
             case "turn_start":
                 self._turn_start = time.monotonic()
                 self._current_turn = {"turn": kwargs.get("turn", 0)}
+                tools_enabled = kwargs.get("tools_enabled")
+                if tools_enabled is not None:
+                    self._current_turn["tools_enabled"] = bool(tools_enabled)
                 self._current_tools = []
 
             case "message_end":
@@ -161,6 +170,8 @@ class TraceCollector:
             "tool_preset": self.tool_preset,
             "enabled_skills": self.enabled_skills,
             "planning_enabled": self.planning_enabled,
+            "awaiting_plan_confirmation_at_start": self.awaiting_plan_confirmation_at_start,
+            "prompt_phase": self.prompt_phase,
             "user_input": self.user_input,
             "total_turns": len(self.turns),
             "total_time_ms": total_ms,

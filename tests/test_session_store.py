@@ -66,6 +66,10 @@ class SessionStoreTests(unittest.TestCase):
                     recent_message_count=6,
                     browser_mode="attached",
                     browser_attached_confirmed=True,
+                    awaiting_plan_confirmation=True,
+                    pending_plan_text="1. inspect\n2. edit",
+                    pending_plan_request_text="please fix the flow",
+                    plan_generated_at=5678.9,
                 )
                 session.messages = [{"role": "user", "content": "hi"}]
                 save_session(123, session)
@@ -85,6 +89,10 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual(restored.recent_message_count, 6)
         self.assertEqual(restored.browser_mode, "attached")
         self.assertTrue(restored.browser_attached_confirmed)
+        self.assertTrue(restored.awaiting_plan_confirmation)
+        self.assertEqual(restored.pending_plan_text, "1. inspect\n2. edit")
+        self.assertEqual(restored.pending_plan_request_text, "please fix the flow")
+        self.assertEqual(restored.plan_generated_at, 5678.9)
         self.assertEqual(restored.messages[0]["content"], "hi")
 
     def test_save_uses_atomic_replace_without_tmp_leftovers(self) -> None:

@@ -167,6 +167,130 @@ class AgentSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("正在执行: write", text)
         self.assertIn("最近输出: 正在补测试", text)
 
+    def test_render_progress_text_shows_waiting_plan_confirmation(self) -> None:
+        session = AgentSession(
+            model="openai/GLM-5.1",
+            tools=[Tool("noop", "noop", {"type": "object"}, _noop_tool)],
+            awaiting_plan_confirmation=True,
+            pending_plan_text="1. 检查代码\n2. 修改实现",
+            pending_plan_request_text="请帮我修复登录流程",
+        )
+
+        text = session.render_progress_text()
+
+        self.assertIn("当前正在等待你确认计划。", text)
+        self.assertIn("原始请求: 请帮我修复登录流程", text)
+        self.assertIn("计划摘要:", text)
+        self.assertIn("回复“继续”即可开始执行", text)
+
+    async def test_plan_mode_returns_plan_before_execution(self) -> None:
+        session = AgentSession(
+            model="openai/GLM-5.1",
+            tools=[Tool("noop", "noop", {"type": "object"}, _noop_tool)],
+            planning_enabled=True,
+        )
+        seen_tools: list[object] = []
+
+        async def planning_stream(**kwargs):  # type: ignore[no-untyped-def]
+            seen_tools.append(kwargs.get("tools"))
+            return LLMResponse(
+                content="1. 先检查相关代码。\n2. 再补最小改动。\n\n请回复“继续”开始执行。"
+            )
+
+        with patch("ragtag_crew.agent.stream_chat", side_effect=planning_stream):
+            result = await session.prompt("请帮我实现登录并补测试")
+
+        self.assertIn("请回复“继续”开始执行。", result)
+        self.assertEqual(seen_tools, [None])
+        self.assertTrue(session.awaiting_plan_confirmation)
+        self.assertEqual(session.pending_plan_text, result)
+        self.assertEqual(session.pending_plan_request_text, "请帮我实现登录并补测试")
+        self.assertEqual(session.messages[-1]["content"], result)
+
+    async def test_plan_mode_confirmation_runs_execution(self) -> None:
+        session = AgentSession(
+            model="openai/GLM-5.1",
+            tools=[Tool("read", "read", {"type": "object"}, _noop_tool)],
+            planning_enabled=True,
+        )
+
+        async def read_execute(**kwargs):  # type: ignore[no-untyped-def]
+            return "file content"
+
+        read_tool = Tool("read", "read", {"type": "object"}, read_execute)
+
+        responses = [
+            LLMResponse(
+                content="1. 先读相关文件。\n2. 再总结结果。\n\n请回复“继续”开始执行。"
+            ),
+            LLMResponse(
+                content="",
+                tool_calls=[ToolCall(id="c1", name="read", arguments={"path": "a.py"})],
+            ),
+            LLMResponse(content="done"),
+        ]
+        seen_tools: list[object] = []
+
+        async def fake_stream(**kwargs):  # type: ignore[no-untyped-def]
+            seen_tools.append(kwargs.get("tools"))
+            return responses.pop(0)
+
+        with (
+            patch("ragtag_crew.agent.stream_chat", side_effect=fake_stream),
+            patch("ragtag_crew.agent.get_tool", return_value=read_tool),
+            patch("ragtag_crew.agent.settings.verify_enabled", False),
+        ):
+            plan = await session.prompt("请检查这个模块并告诉我问题")
+            result = await session.prompt("继续")
+
+        self.assertIn("请回复“继续”开始执行。", plan)
+        self.assertEqual(result, "done")
+        self.assertFalse(session.awaiting_plan_confirmation)
+        self.assertEqual(seen_tools[0], None)
+        self.assertIsNotNone(seen_tools[1])
+        tool_messages = [m for m in session.messages if m.get("role") == "tool"]
+        self.assertEqual(len(tool_messages), 1)
+        self.assertEqual(tool_messages[0]["tool_name"], "read")
+
+    async def test_new_request_while_waiting_plan_restarts_planning(self) -> None:
+        session = AgentSession(
+            model="openai/GLM-5.1",
+            tools=[Tool("noop", "noop", {"type": "object"}, _noop_tool)],
+            planning_enabled=True,
+        )
+        responses = [
+            LLMResponse(content="1. 旧计划\n\n请回复“继续”开始执行。"),
+            LLMResponse(content="1. 新计划\n\n请回复“继续”开始执行。"),
+        ]
+
+        async def planning_stream(**kwargs):  # type: ignore[no-untyped-def]
+            return responses.pop(0)
+
+        with patch("ragtag_crew.agent.stream_chat", side_effect=planning_stream):
+            await session.prompt("请帮我修复登录流程")
+            result = await session.prompt("请修改方案并补文档")
+
+        self.assertTrue(session.awaiting_plan_confirmation)
+        self.assertEqual(session.pending_plan_text, result)
+        self.assertEqual(session.pending_plan_request_text, "请修改方案并补文档")
+
+    def test_reset_clears_pending_plan_state(self) -> None:
+        session = AgentSession(
+            model="openai/GLM-5.1",
+            tools=[Tool("noop", "noop", {"type": "object"}, _noop_tool)],
+            awaiting_plan_confirmation=True,
+            pending_plan_text="1. old plan",
+            pending_plan_request_text="old request",
+            plan_generated_at=123.0,
+        )
+
+        session.reset()
+
+        self.assertFalse(session.awaiting_plan_confirmation)
+        self.assertEqual(session.pending_plan_text, "")
+        self.assertEqual(session.pending_plan_request_text, "")
+        self.assertIsNone(session.plan_generated_at)
+
     async def test_manual_compact_respects_force_flag(self) -> None:
         session = AgentSession(
             model="openai/GLM-5.1",
@@ -369,6 +493,7 @@ class AgentSessionTests(unittest.IsolatedAsyncioTestCase):
             session = AgentSession(
                 model="openai/GLM-5.1",
                 tools=[write_tool],
+                planning_enabled=False,
             )
             result = await session.prompt("add a test file")
 
@@ -411,6 +536,7 @@ class AgentSessionTests(unittest.IsolatedAsyncioTestCase):
             session = AgentSession(
                 model="openai/GLM-5.1",
                 tools=[write_tool],
+                planning_enabled=False,
             )
             result = await session.prompt("write something")
 
@@ -449,7 +575,11 @@ class AgentSessionTests(unittest.IsolatedAsyncioTestCase):
                 side_effect=[await external_stream(), LLMResponse(content="done")],
             ),
         ):
-            session = AgentSession(model="openai/GLM-5.1", tools=[search_tool])
+            session = AgentSession(
+                model="openai/GLM-5.1",
+                tools=[search_tool],
+                planning_enabled=False,
+            )
             await session.prompt("search this")
 
         tool_messages = [m for m in session.messages if m.get("role") == "tool"]

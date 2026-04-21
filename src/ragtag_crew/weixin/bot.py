@@ -1,8 +1,10 @@
-"""Weixin bot frontend with minimal command support."""
+"""Weixin bot frontend with background execution support."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -36,6 +38,10 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 _sessions: dict[str, AgentSession] = {}
+_active_prompt_tasks: dict[str, asyncio.Task[Any]] = {}
+
+_STATUS_HEARTBEAT_SECS = 20.0
+_STATUS_THROTTLE_SECS = 10.0
 
 
 def _default_session_key(user_id: str) -> str:
@@ -96,12 +102,165 @@ def _get_session(user_id: str) -> AgentSession:
     return _get_session_by_key(_current_route(user_id).current_session_key)
 
 
+def _get_active_prompt_task(session_key: str) -> asyncio.Task[Any] | None:
+    task = _active_prompt_tasks.get(session_key)
+    if task is None:
+        return None
+    if task.done():
+        _active_prompt_tasks.pop(session_key, None)
+        return None
+    return task
+
+
 def _save_current_session(user_id: str, session: AgentSession) -> None:
     save_session(_current_route(user_id).current_session_key, session)
 
 
 def _delete_current_session(user_id: str) -> None:
     delete_session(_current_route(user_id).current_session_key)
+
+
+def _split_weixin_text(text: str, *, limit: int = 1800) -> list[str]:
+    normalized = text.strip() or "Done."
+    if len(normalized) <= limit:
+        return [normalized]
+
+    chunks: list[str] = []
+    current = ""
+    for paragraph in normalized.split("\n\n"):
+        candidate = paragraph if not current else f"{current}\n\n{paragraph}"
+        if len(candidate) <= limit:
+            current = candidate
+            continue
+        if current:
+            chunks.append(current)
+            current = ""
+        if len(paragraph) <= limit:
+            current = paragraph
+            continue
+        for line in paragraph.splitlines():
+            candidate = line if not current else f"{current}\n{line}"
+            if len(candidate) <= limit:
+                current = candidate
+                continue
+            if current:
+                chunks.append(current)
+                current = ""
+            while len(line) > limit:
+                chunks.append(line[:limit])
+                line = line[limit:]
+            current = line
+    if current:
+        chunks.append(current)
+    return chunks or [normalized]
+
+
+async def _send_weixin_text(bot: Any, user_id: str, text: str) -> None:
+    for chunk in _split_weixin_text(text):
+        await bot.send(user_id, chunk)
+
+
+class WeixinProgressNotifier:
+    def __init__(self, bot: Any, user_id: str, session: AgentSession) -> None:
+        self.bot = bot
+        self.user_id = user_id
+        self.session = session
+        self._last_status_text = ""
+        self._last_status_sent_at = 0.0
+        self._heartbeat_task: asyncio.Task[None] | None = None
+
+    async def start(self) -> None:
+        await self._send_status("开始处理，请稍候。")
+        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+
+    async def close(self) -> None:
+        if self._heartbeat_task is None:
+            return
+        self._heartbeat_task.cancel()
+        try:
+            await self._heartbeat_task
+        except asyncio.CancelledError:
+            pass
+        self._heartbeat_task = None
+
+    async def on_event(self, event_type: str, **kwargs: Any) -> None:
+        if event_type != "tool_execution_start":
+            return
+        tool_call = kwargs.get("tool_call")
+        tool_name = getattr(tool_call, "name", "unknown")
+        await self._send_status(f"正在执行工具: {tool_name}", force=True)
+
+    async def _heartbeat_loop(self) -> None:
+        while True:
+            await asyncio.sleep(_STATUS_HEARTBEAT_SECS)
+            if not self.session.is_busy:
+                return
+            await self._send_status(self.session.render_progress_text())
+
+    async def _send_status(self, text: str, *, force: bool = False) -> None:
+        message = text.strip()
+        if not message:
+            return
+        now = time.monotonic()
+        if not force and now - self._last_status_sent_at < _STATUS_THROTTLE_SECS:
+            return
+        if force and message == self._last_status_text and now - self._last_status_sent_at < 3:
+            return
+        try:
+            await self.bot.send(self.user_id, message)
+            self._last_status_text = message
+            self._last_status_sent_at = now
+        except Exception:
+            log.debug("Failed to send Weixin status update", exc_info=True)
+
+
+async def _run_session_prompt_in_background(
+    bot: Any,
+    message: Any,
+    session: AgentSession,
+    session_key: str,
+    text: str,
+) -> None:
+    collector = TraceCollector(session_key=session_key)
+    collector.set_context(
+        model=session.model,
+        user_input=text,
+        tool_preset=session.tool_preset,
+        enabled_skills=session.enabled_skills,
+        planning_enabled=session.planning_enabled,
+    )
+    notifier = WeixinProgressNotifier(bot, message.user_id, session)
+    session.subscribe(collector.on_event)
+    session.subscribe(notifier.on_event)
+
+    try:
+        await notifier.start()
+        try:
+            await bot.send_typing(message.user_id)
+        except Exception:
+            log.debug("Failed to send Weixin typing status", exc_info=True)
+
+        result = await session.prompt(text)
+        await _send_weixin_text(bot, message.user_id, result.strip() or "Done.")
+    except asyncio.CancelledError:
+        session.abort()
+        await _send_weixin_text(bot, message.user_id, "已取消当前任务。")
+        raise
+    except UserAbortedError:
+        await _send_weixin_text(bot, message.user_id, "已取消当前任务。")
+    except Exception as exc:
+        log.exception("Weixin prompt() failed")
+        await _send_weixin_text(bot, message.user_id, f"Error: {exc}")
+    finally:
+        await notifier.close()
+        collector.finalize()
+        _save_current_session(message.user_id, session)
+        session.unsubscribe(notifier.on_event)
+        session.unsubscribe(collector.on_event)
+        current_task = asyncio.current_task()
+        active_task = _active_prompt_tasks.get(session_key)
+        if active_task is current_task or active_task is None or active_task.done():
+            _active_prompt_tasks.pop(session_key, None)
 
 
 def _help_text() -> str:
@@ -180,7 +339,7 @@ def _resolve_session_target(target: str) -> str:
 
 async def _cmd_new(bot: Any, message: Any) -> None:
     session = _get_session(message.user_id)
-    if session.is_busy:
+    if session.is_busy or _get_active_prompt_task(_current_route(message.user_id).current_session_key):
         await bot.reply(message, "Please wait — agent is busy.")
         return
     session.reset()
@@ -190,10 +349,14 @@ async def _cmd_new(bot: Any, message: Any) -> None:
 
 async def _cmd_cancel(bot: Any, message: Any) -> None:
     session = _get_session(message.user_id)
-    if not session.is_busy:
+    session_key = _current_route(message.user_id).current_session_key
+    task = _get_active_prompt_task(session_key)
+    if not session.is_busy and task is None:
         await bot.reply(message, "No active task to cancel.")
         return
     session.abort()
+    if task is not None:
+        task.cancel()
     await bot.reply(message, "已发送取消信号。")
 
 
@@ -218,6 +381,9 @@ async def _cmd_plan(bot: Any, message: Any, args: list[str]) -> None:
         return
     if action == "off":
         session.planning_enabled = False
+        clear_pending_plan = getattr(session, "clear_pending_plan", None)
+        if callable(clear_pending_plan):
+            clear_pending_plan()
         _save_current_session(user_id, session)
         await bot.reply(message, "Build mode ON — 直接执行，不输出计划。")
         return
@@ -248,7 +414,7 @@ async def _cmd_session(bot: Any, message: Any, args: list[str]) -> None:
                 message, _with_session_usage("Usage error: missing session target.")
             )
             return
-        if session.is_busy:
+        if session.is_busy or _get_active_prompt_task(route.current_session_key):
             await bot.reply(
                 message, _with_session_usage("Please wait — agent is busy.")
             )
@@ -272,7 +438,7 @@ async def _cmd_session(bot: Any, message: Any, args: list[str]) -> None:
         return
 
     if action == "reset":
-        if session.is_busy:
+        if session.is_busy or _get_active_prompt_task(route.current_session_key):
             await bot.reply(
                 message, _with_session_usage("Please wait — agent is busy.")
             )
@@ -338,42 +504,25 @@ async def handle_incoming_message(bot: Any, message: Any) -> None:
     session = _get_session(message.user_id)
     route = _current_route(message.user_id)
     session_key = route.current_session_key
-    if session.is_busy:
+    active_task = _get_active_prompt_task(session_key)
+    if session.is_busy or active_task is not None:
         reply_text = (
             session.render_progress_text()
-            if _is_progress_query(text)
-            else "Please wait for the current response to finish."
+            if session.is_busy and _is_progress_query(text)
+            else (
+                "任务已提交，正在启动。"
+                if active_task is not None and not session.is_busy and _is_progress_query(text)
+                else "当前任务仍在执行，请等待完成或发送 /cancel。"
+            )
         )
         await bot.reply(message, reply_text)
         return
 
-    collector = TraceCollector(session_key=session_key)
-    collector.set_context(
-        model=session.model,
-        user_input=text,
-        tool_preset=session.tool_preset,
-        enabled_skills=session.enabled_skills,
-        planning_enabled=session.planning_enabled,
+    task = asyncio.create_task(
+        _run_session_prompt_in_background(bot, message, session, session_key, text)
     )
-    session.subscribe(collector.on_event)
-
-    try:
-        try:
-            await bot.send_typing(message.user_id)
-        except Exception:
-            log.debug("Failed to send Weixin typing status", exc_info=True)
-
-        result = await session.prompt(text)
-        await bot.reply(message, result.strip() or "Done.")
-    except UserAbortedError:
-        await bot.reply(message, "已取消当前任务。")
-    except Exception as exc:
-        log.exception("Weixin prompt() failed")
-        await bot.reply(message, f"Error: {exc}")
-    finally:
-        collector.finalize()
-        _save_current_session(message.user_id, session)
-        session.unsubscribe(collector.on_event)
+    _active_prompt_tasks[session_key] = task
+    await bot.reply(message, "已收到，开始处理。可随时发送 /cancel 或直接询问进度。")
 
 
 def run_weixin_frontend() -> int:

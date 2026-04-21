@@ -9,22 +9,23 @@
 ## 当前定位
 
 - 正式接入渠道：Telegram、微信和 REPL 终端（开发/调试）
-- Agent 跑在你自己的机器上，模型调用走你自己的 API key
+- Agent 跑在你自己的机器上，模型调用默认走你自己的 API key，也可复用 OpenCode 的 Codex/ChatGPT 登录态
 - 用 Python 自建 agent loop，不依赖第三方 agent SDK
 - 后续可以再扩展 Web、Discord 等入口，但现在不提前做多前端抽象
 
 ## 当前能力
 
-- litellm 统一接入多模型
+- litellm 统一接入多模型；`openai/gpt-5.4` 可选走 OpenCode 的 Codex OAuth 专线
 - 已实现 `read` / `write` / `edit` / `delete_file` / `bash` / `grep` / `find` / `ls` 等基础工具，并补充 `create_workspace` / `list_workspaces` / `delete_workspace` / `cleanup_workspaces` / `write_script` 等工作区管理工具
 - 工具路径沙箱：写操作限制在工作目录内，读操作允许访问任意绝对路径
 - 文件删除保护：bash 拦截 `rm`/`del`/`rmdir` 等删除命令，统一通过 `delete_file` 工具执行
 - 工作目录级 workspace 管理：每个 `working_dir` 下维护独立的 `.ragtag_crew/workspaces/`，默认搜索会隐藏该目录，但可通过专用 workspace 工具稳定复用脚本与临时产物
 - 新脚本根目录保护：新建脚本如果目标位于 `working_dir` 根目录，会被视为歧义路径并拒绝直接 `write`；应明确写入项目子目录，或使用 `write_script` 写入 managed script workspace
 - Telegram 流式输出、HTML 富文本渲染、消息编辑节流、单用户鉴权已接通
-- 微信首版已接通最小可用链路：普通对话、忙碌时进度查询、`/help`、`/new`、`/cancel`、`/plan`、`/sessions`、`/session`
+- 微信已支持后台执行、主动状态通知、长任务期间进度查询，以及 `/help`、`/new`、`/cancel`、`/plan`、`/sessions`、`/session`
 - 已支持 `session_routes`：当前聊天窗口可绑定到任意 `session_key`，Telegram / 微信可手动共享同一会话，但默认不自动互通
 - 已支持 `/sessions`、`/session current`、`/session use <session_key>`、`/session use <index>`、`/session reset`
+- 已把 `plan mode` 从提示词约束升级为运行时强约束：非 trivial 请求会先产出计划、等待用户确认，再进入真实执行
 - 已支持运行时进度快照：忙碌时可识别进度询问并返回当前 turn、工具执行数、最近响应预览
 - 已支持 `/cancel` 显式确认反馈，取消与超时在运行时语义上分离
 - Telegram 表格渲染已做基础适配：Markdown 风格表格会自动转成等宽代码块，避免消息中表格错位
@@ -60,7 +61,10 @@ PowerShell:
 uv run ragtag-crew -h
 uv sync
 Copy-Item .env.example .env
-# 编辑 .env，至少启用一个前端（`TELEGRAM_BOT_TOKEN` 或 `WEIXIN_ENABLED=true`），并填入至少一个模型 API Key
+# 编辑 .env，至少启用一个前端（`TELEGRAM_BOT_TOKEN` 或 `WEIXIN_ENABLED=true`），并填入至少一种可用模型凭据
+# 如需接入 GPT-5.4，可在 `AVAILABLE_MODELS` 中保留或加入 `openai/gpt-5.4`
+# 如需复用 OpenCode 的 Codex/ChatGPT 登录态，可设 `OPENAI_AUTH_MODE=codex`
+# Codex 路线默认读取环境代理；如需固定代理，可显式设置 `CODEX_PROXY=http://localhost:1087`
 # Windows 下如启用微信，建议把 WEIXIN_CREDENTIALS_PATH 写成 C:/Users/<username>/.weixin-bot/credentials.json
 
 uv run ragtag-crew
@@ -90,6 +94,7 @@ uv run ragtag-crew
 - 可用 `ragtag-crew --history-list` 列出已保存会话，用 `ragtag-crew --history <session_key>` 查看会话摘要与最近消息
 - 会话忙碌时直接问“进度”“进展”“好了没”等，机器人会返回实时快照
 - 用 `/cancel` 中止当前任务，机器人会立即确认已发送取消信号
+- 开启 `/plan on` 后，复杂请求会先返回编号计划；回复“继续”后才会真正开始执行，也可以直接发送修改意见重做计划
 - 如需保存可复用脚本或临时工作区，优先使用 `write_script`、`create_workspace`、`list_workspaces` 等 workspace 工具；普通 `find/grep/ls` 默认不会把 `.ragtag_crew/` 混入项目浏览结果
 - 复制 `mcp_servers.example.json` 为 `mcp_servers.local.json` 后，可通过 `/mcp` 查看 MCP server 状态
 - 复制 `openapi_tools.example.json` 为 `openapi_tools.local.json` 后，可通过 `/ext` 查看固定 OpenAPI provider 状态
@@ -176,6 +181,7 @@ ragtag_crew/
 - `project-roadmap.md`：当前项目级路线图与阶段安排
 - `search-gateway-plan.md`：搜索内置层与独立 gateway 的专项设计
 - `docs/background-job-plan.md`：未来长任务后台任务化方案，聚焦 job、主动通知与可查询进度
+- `docs/weixin-plan-mode-implementation-plan.md`：微信后台执行与 plan mode 强约束改造方案及实现边界
 - `docs/web-frontend-plan.md`：未来 Web 第四前端接入方案，聚焦本机 Web 对话界面与前端编排
 - `archive/pi-sdk-validation/`：早期 Pi SDK 方向的验证记录，仅保留参考
 

@@ -157,6 +157,10 @@ def load_session(
         browser_mode=payload.get("browser_mode", settings.browser_mode_default),
         browser_attached_confirmed=payload.get("browser_attached_confirmed", False),
         planning_enabled=payload.get("planning_enabled", settings.planning_enabled),
+        awaiting_plan_confirmation=payload.get("awaiting_plan_confirmation", False),
+        pending_plan_text=payload.get("pending_plan_text", ""),
+        pending_plan_request_text=payload.get("pending_plan_request_text", ""),
+        plan_generated_at=payload.get("plan_generated_at"),
     )
     session.messages = payload.get("messages", [])
     return session
@@ -180,6 +184,10 @@ def save_session(session_key: SessionKey, session: AgentSession) -> None:
         "browser_mode": session.browser_mode,
         "browser_attached_confirmed": session.browser_attached_confirmed,
         "planning_enabled": session.planning_enabled,
+        "awaiting_plan_confirmation": session.awaiting_plan_confirmation,
+        "pending_plan_text": session.pending_plan_text,
+        "pending_plan_request_text": session.pending_plan_request_text,
+        "plan_generated_at": session.plan_generated_at,
         "messages": session.messages,
         "last_active_at": time.time(),
     }

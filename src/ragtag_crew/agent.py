@@ -38,6 +38,89 @@ log = logging.getLogger(__name__)
 # Type alias for event callbacks.
 EventCallback = Callable[..., Awaitable[None]]
 
+_PLAN_ACTION_KEYWORDS = (
+    "implement",
+    "add",
+    "update",
+    "change",
+    "modify",
+    "refactor",
+    "fix",
+    "debug",
+    "investigate",
+    "search",
+    "check",
+    "analyze",
+    "plan",
+    "run",
+    "test",
+    "build",
+    "write",
+    "create",
+    "generate",
+    "实现",
+    "新增",
+    "添加",
+    "修改",
+    "更新",
+    "重构",
+    "修复",
+    "排查",
+    "检查",
+    "分析",
+    "搜索",
+    "查找",
+    "生成",
+    "创建",
+    "编写",
+    "整理",
+    "迁移",
+    "集成",
+    "接入",
+    "运行",
+    "执行",
+    "测试",
+    "构建",
+    "方案",
+    "脚本",
+    "trace",
+    "看下",
+    "看看",
+)
+
+_PLAN_CONFIRMATIONS = frozenset(
+    {
+        "继续",
+        "继续吧",
+        "开始",
+        "执行",
+        "开工",
+        "确认",
+        "可以",
+        "按这个做",
+        "yes",
+        "go",
+        "run",
+        "start",
+        "proceed",
+        "continue",
+    }
+)
+
+_PLANNING_FALLBACK = (
+    "1. 先确认现状与相关代码路径。\n"
+    "2. 再按最小正确改动实现需求。\n"
+    "3. 最后补测试并验证结果。\n\n"
+    "请回复“继续”开始执行，或直接发送修改意见。"
+)
+
+_PLANNING_INSTRUCTION = (
+    "你当前处于 planning phase。"
+    "只输出一个简洁的编号计划，不要调用工具，不要声称已经开始执行。"
+    "最后一行明确提示用户回复“继续”后才会开始执行，"
+    "或者直接发送新的修改意见来调整计划。"
+)
+
 
 class AgentSession:
     """A single agent conversation with tool-calling support.
@@ -72,6 +155,10 @@ class AgentSession:
         browser_mode: str = "isolated",
         browser_attached_confirmed: bool = False,
         planning_enabled: bool | None = None,
+        awaiting_plan_confirmation: bool = False,
+        pending_plan_text: str = "",
+        pending_plan_request_text: str = "",
+        plan_generated_at: float | None = None,
     ):
         self.model = model
         self.tools = tools
@@ -91,6 +178,10 @@ class AgentSession:
             if planning_enabled is not None
             else settings.planning_enabled
         )
+        self.awaiting_plan_confirmation = awaiting_plan_confirmation
+        self.pending_plan_text = pending_plan_text
+        self.pending_plan_request_text = pending_plan_request_text
+        self.plan_generated_at = plan_generated_at
         self.messages: list[dict[str, Any]] = []
 
         self._callbacks: list[EventCallback] = []
@@ -113,6 +204,19 @@ class AgentSession:
 
     def render_progress_text(self) -> str:
         """Return a short runtime snapshot for busy-state progress queries."""
+        if self.awaiting_plan_confirmation:
+            lines = ["当前正在等待你确认计划。"]
+            if self.pending_plan_request_text:
+                lines.append(
+                    f"原始请求: {self._clip_progress_text(self.pending_plan_request_text, 80)}"
+                )
+            if self.pending_plan_text:
+                lines.append(
+                    f"计划摘要: {self._clip_progress_text(self.pending_plan_text, 100)}"
+                )
+            lines.append("回复“继续”即可开始执行，也可以直接发送新的修改意见。")
+            return "\n".join(lines)
+
         if not self._busy:
             return "当前没有进行中的任务。"
 
@@ -169,6 +273,11 @@ class AgentSession:
         self.summary_updated_at = None
         self.recent_message_count = 0
         self.browser_attached_confirmed = False
+        self._clear_pending_plan_state()
+
+    def clear_pending_plan(self) -> None:
+        """Clear any waiting-for-confirmation planning state."""
+        self._clear_pending_plan_state()
 
     async def compact(self, *, force: bool = False) -> bool:
         """Compact older history into ``session_summary``.
@@ -194,6 +303,23 @@ class AgentSession:
         if self._busy:
             raise RuntimeError("Session is already processing a prompt")
 
+        awaiting_plan_confirmation_at_start = self.awaiting_plan_confirmation
+        if not self.planning_enabled and self.awaiting_plan_confirmation:
+            self._clear_pending_plan_state()
+            awaiting_plan_confirmation_at_start = False
+
+        if self.awaiting_plan_confirmation and self._is_plan_confirmation(text):
+            self._clear_pending_plan_state()
+            prompt_phase = "execution"
+        else:
+            if self.awaiting_plan_confirmation:
+                self._clear_pending_plan_state()
+            prompt_phase = (
+                "planning"
+                if self._should_require_plan(text)
+                else "execution"
+            )
+
         self._busy = True
         self._abort_event.clear()
         self._active_started_at = time.monotonic()
@@ -207,14 +333,20 @@ class AgentSession:
         self.messages.append({"role": "user", "content": text})
         msg_before_prompt = len(self.messages) - 1
 
-        await self._emit("agent_start")
+        await self._emit(
+            "agent_start",
+            prompt_phase=prompt_phase,
+            awaiting_plan_confirmation_at_start=awaiting_plan_confirmation_at_start,
+        )
         final_content = ""
 
         try:
-            final_content = await asyncio.wait_for(
-                self._run_loop(),
-                timeout=settings.turn_timeout,
+            runner = (
+                self._run_planning_phase()
+                if prompt_phase == "planning"
+                else self._run_loop()
             )
+            final_content = await asyncio.wait_for(runner, timeout=settings.turn_timeout)
         except (LLMTimeoutError, LLMChunkTimeoutError):
             raise
         except UserAbortedError:
@@ -323,6 +455,11 @@ class AgentSession:
         self.recent_message_count = len(self.messages)
 
     def _build_messages(self) -> list[dict[str, Any]]:
+        return self._build_messages_with_extra_prompt()
+
+    def _build_messages_with_extra_prompt(
+        self, extra_system_prompt: str | None = None
+    ) -> list[dict[str, Any]]:
         msgs: list[dict[str, Any]] = []
         system_prompt = build_system_prompt(
             base_system_prompt=self.system_prompt,
@@ -333,10 +470,77 @@ class AgentSession:
             session_summary=self.session_summary,
             planning_enabled=self.planning_enabled,
         )
+        if extra_system_prompt:
+            system_prompt = (
+                f"{system_prompt}\n\n{extra_system_prompt}"
+                if system_prompt
+                else extra_system_prompt
+            )
         if system_prompt:
             msgs.append({"role": "system", "content": system_prompt})
         msgs.extend(self.messages)
         return msgs
+
+    def _clear_pending_plan_state(self) -> None:
+        self.awaiting_plan_confirmation = False
+        self.pending_plan_text = ""
+        self.pending_plan_request_text = ""
+        self.plan_generated_at = None
+
+    def _is_plan_confirmation(self, text: str) -> bool:
+        normalized = " ".join(text.lower().split())
+        return normalized in _PLAN_CONFIRMATIONS
+
+    def _should_require_plan(self, text: str) -> bool:
+        if not self.planning_enabled:
+            return False
+
+        normalized = " ".join(text.lower().split())
+        if not normalized:
+            return False
+        if "\n" in text:
+            return True
+        if len(normalized) >= 60:
+            return True
+        return any(keyword in normalized for keyword in _PLAN_ACTION_KEYWORDS)
+
+    async def _run_planning_phase(self) -> str:
+        turn = 1
+        self._active_turn = turn
+        await self._emit("turn_start", turn=turn, tools_enabled=False)
+        await self._emit("message_start")
+
+        try:
+            response: LLMResponse = await stream_chat(
+                model=self.model,
+                messages=self._build_messages_with_extra_prompt(_PLANNING_INSTRUCTION),
+                tools=None,
+                on_delta=self._on_text_delta,
+                should_abort=self._abort_event.is_set,
+            )
+        except (LLMTimeoutError, LLMChunkTimeoutError) as exc:
+            response = exc.partial_response or LLMResponse()
+            if response.content:
+                self._response_preview = self._clip_progress_text(response.content, 160)
+            await self._emit("message_end", content=response.content)
+            self._append_assistant_message(response)
+            await self._emit("turn_end", turn=turn)
+            self._completed_turns = turn
+            raise
+
+        content = response.content.strip() or _PLANNING_FALLBACK
+        response.content = content
+        self._response_preview = self._clip_progress_text(content, 160)
+        self.awaiting_plan_confirmation = True
+        self.pending_plan_text = content
+        latest_user_text = self.messages[-1].get("content", "") if self.messages else ""
+        self.pending_plan_request_text = latest_user_text if isinstance(latest_user_text, str) else ""
+        self.plan_generated_at = time.time()
+        await self._emit("message_end", content=content)
+        self._append_assistant_message(response)
+        await self._emit("turn_end", turn=turn)
+        self._completed_turns = turn
+        return content
 
     async def _execute_tool(self, tc: ToolCall) -> str:
         if self._abort_event.is_set():
@@ -498,7 +702,7 @@ class AgentSession:
                 raise UserAbortedError()
 
             self._active_turn = turn
-            await self._emit("turn_start", turn=turn)
+            await self._emit("turn_start", turn=turn, tools_enabled=bool(tool_schemas))
             await self._emit("message_start")
 
             try:

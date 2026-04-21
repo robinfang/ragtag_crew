@@ -52,8 +52,12 @@ class TraceCollectorTests(unittest.IsolatedAsyncioTestCase):
                     planning_enabled=True,
                 )
 
-                await c.on_event("agent_start")
-                await c.on_event("turn_start", turn=1)
+                await c.on_event(
+                    "agent_start",
+                    prompt_phase="execution",
+                    awaiting_plan_confirmation_at_start=True,
+                )
+                await c.on_event("turn_start", turn=1, tools_enabled=True)
                 await c.on_event("message_end", content="let me read that")
                 await c.on_event(
                     "tool_execution_start",
@@ -84,12 +88,15 @@ class TraceCollectorTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(record["tool_preset"], "coding")
                 self.assertEqual(record["enabled_skills"], ["review"])
                 self.assertTrue(record["planning_enabled"])
+                self.assertTrue(record["awaiting_plan_confirmation_at_start"])
+                self.assertEqual(record["prompt_phase"], "execution")
                 self.assertEqual(record["total_turns"], 1)
                 self.assertEqual(record["status"], "success")
                 self.assertEqual(len(record["turns"]), 1)
 
                 turn = record["turns"][0]
                 self.assertEqual(turn["turn"], 1)
+                self.assertTrue(turn["tools_enabled"])
                 self.assertTrue(turn["has_content"])
                 self.assertEqual(turn["tool_calls"], ["read"])
                 self.assertEqual(len(turn["tools"]), 1)
