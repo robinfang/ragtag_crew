@@ -25,10 +25,19 @@ class Settings(BaseSettings):
 
     # LLM
     default_model: str = "openai/GLM-5.1"
-    available_models: str = "openai/GLM-5.1,openai/GLM-5-Turbo"
+    available_models: str = "openai/GLM-5.1,openai/GLM-5-Turbo,openai/gpt-5.4"
     anthropic_api_key: str = ""
     openai_api_key: str = ""
     openai_api_base: str = ""
+    openai_auth_mode: str = "api"
+    opencode_auth_file: str = "~/.local/share/opencode/auth.json"
+    codex_api_endpoint: str = "https://chatgpt.com/backend-api/codex/responses"
+    codex_auth_issuer: str = "https://auth.openai.com"
+    codex_trust_env_proxy: bool = True
+    codex_proxy: str = ""
+    codex_connect_timeout: float = 15.0
+    codex_read_timeout: float = 60.0
+    codex_refresh_timeout: float = 20.0
     glm_api_key: str = ""
     glm_api_base: str = "https://open.bigmodel.cn/api/coding/paas/v4"
 
