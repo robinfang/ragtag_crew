@@ -22,15 +22,19 @@
 - 工作目录级 workspace 管理：每个 `working_dir` 下维护独立的 `.ragtag_crew/workspaces/`，默认搜索会隐藏该目录，但可通过专用 workspace 工具稳定复用脚本与临时产物
 - 新脚本根目录保护：新建脚本如果目标位于 `working_dir` 根目录，会被视为歧义路径并拒绝直接 `write`；应明确写入项目子目录，或使用 `write_script` 写入 managed script workspace
 - Telegram 流式输出、HTML 富文本渲染、消息编辑节流、单用户鉴权已接通
+- Telegram 普通消息已改为后台 task 执行，长任务期间 `/cancel` 和清理收尾更可靠
 - 微信已支持后台执行、主动状态通知、长任务期间进度查询，以及 `/help`、`/new`、`/cancel`、`/plan`、`/sessions`、`/session`
 - 已支持 `session_routes`：当前聊天窗口可绑定到任意 `session_key`，Telegram / 微信可手动共享同一会话，但默认不自动互通
 - 已支持 `/sessions`、`/session current`、`/session use <session_key>`、`/session use <index>`、`/session reset`
 - 已把 `plan mode` 从提示词约束升级为运行时强约束：非 trivial 请求会先产出计划、等待用户确认，再进入真实执行
+- 已支持 `plan mode` 等待确认状态持久化；进程重启后仍可恢复“已出计划、待确认”的会话状态
 - 已支持运行时进度快照：忙碌时可识别进度询问并返回当前 turn、工具执行数、最近响应预览
 - 已支持 `/cancel` 显式确认反馈，取消与超时在运行时语义上分离
+- `openai/gpt-5.4` 的模型切换校验也会走 Codex OAuth 路由，可直接用于 `/model` 验证与正式对话
 - Telegram 表格渲染已做基础适配：Markdown 风格表格会自动转成等宽代码块，避免消息中表格错位
 - 完善的命令级日志记录：状态变更 INFO、权限/失败 WARNING、只读查询 DEBUG
 - REPL 终端模式已支持实时流式输出、执行轨迹收集、会话持久化和 /plan 命令
+- `--dev` 已改为 supervisor + child 模式，代码变更时会重启子进程而不是直接在主进程 `execv`
 - `prompts.py` 提取了共用的 `DEFAULT_SYSTEM_PROMPT`，Telegram、微信与 REPL 共享同一套系统提示词
 - `session_store.py` 已从 `telegram/` 提升到包根目录，Telegram、微信和 REPL 共用同一套持久化逻辑
 - 已支持仓库内本地 Markdown skill 的会话级启用，并改为“名称 + 摘要 + 路径”的轻量注入；完整内容按需读取
@@ -92,6 +96,7 @@ uv run ragtag-crew
 - 用 `/prompt set <text>` 设置当前会话临时规则，用 `/prompt protect <text>` 写入受保护内容
 - 用 `/help` 查看常用命令；用 `/sessions` 列出最近会话；用 `/session current` 查看当前绑定；用 `/session use <session_key>` 或 `/session use <index>` 切换；用 `/session reset` 恢复默认绑定
 - 可用 `ragtag-crew --history-list` 列出已保存会话，用 `ragtag-crew --history <session_key>` 查看会话摘要与最近消息
+- 可用 `ragtag-crew --check` 快速检查前端与模型配置是否完整；开发模式可用 `ragtag-crew --dev`
 - 会话忙碌时直接问“进度”“进展”“好了没”等，机器人会返回实时快照
 - 用 `/cancel` 中止当前任务，机器人会立即确认已发送取消信号
 - 开启 `/plan on` 后，复杂请求会先返回编号计划；回复“继续”后才会真正开始执行，也可以直接发送修改意见重做计划
@@ -117,6 +122,7 @@ uv run ragtag-crew
 - 使用 `/session use ...` 只是把“当前聊天窗口”绑定到另一个已存在的 session，不会自动合并身份
 - `/new` 会清空当前绑定的 session，但不会自动重置路由；如需恢复默认绑定，请执行 `/session reset`
 - `/session use 2` 的序号以 `/sessions` 当前展示顺序为准；如果参数本身就是完整 session key，则优先按完整 key 匹配
+- 如果会话正处于 `plan mode` 的等待确认状态，这个状态也会随 session 一起持久化
 
 ## 目录结构
 
@@ -128,6 +134,8 @@ ragtag_crew/
 │       ├── config.py             # 配置加载
 │       ├── agent.py              # 自建 agent loop
 │       ├── llm.py                # litellm 封装
+│       ├── codex_auth.py         # OpenCode OAuth / Codex 凭据复用
+│       ├── model_validation.py   # /model 切换前连通性校验
 │       ├── context_builder.py    # system prompt 分层组装
 │       ├── session_summary.py    # 会话压缩与摘要
 │       ├── session_store.py      # 会话持久化（Telegram / 微信 / REPL 共用）
@@ -142,7 +150,7 @@ ragtag_crew/
 │       │   ├── html.py           # Telegram HTML 渲染
 │       │   └── stream.py         # 流式输出与消息编辑
 │       ├── weixin/
-│       │   └── bot.py            # 微信接入层（最小可用版）
+│       │   └── bot.py            # 微信接入层（后台执行 + 状态通知）
 │       ├── external/
 │       │   ├── manager.py        # 外部能力初始化编排
 │       │   ├── mcp_client.py     # MCP 发现与调用
