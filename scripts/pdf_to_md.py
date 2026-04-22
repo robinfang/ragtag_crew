@@ -3,10 +3,13 @@
 用法: python scripts/pdf_to_md.py <pdf_path> [output_path]
 
 示例: python scripts/pdf_to_md.py book.pdf book.md
+
+环境变量: MINERU_API_TOKEN=<your_token>
 """
 
 import hashlib
 import io
+import os
 import sys
 import time
 import zipfile
@@ -14,7 +17,7 @@ from pathlib import Path
 
 import requests
 
-TOKEN = "eyJ0eXBlIjoiSldUIiwiYWxnIjoiSFM1MTIifQ.eyJqdGkiOiIxNTMwMDEyOSIsInJvbCI6IlJPTEVfUkVHSVNURVIiLCJpc3MiOiJPcGVuWExhYiIsImlhdCI6MTc3MzExMjUyNSwiY2xpZW50SWQiOiJsa3pkeDU3bnZ5MjJqa3BxOXgydyIsInBob25lIjoiMTMwNDEwODE2ODYiLCJvcGVuSWQiOm51bGwsInV1aWQiOiI0NzY4NzIwMy0yYmFmLTQ5YzItYTA5Mi1lZGZlZTM5ODFiMDciLCJlbWFpbCI6IiIsImV4cCI6MTc4MDg4ODUyNX0.leHcr38dzFboN0jGLLVxCFmVoHrYmYqYPz-6q8b6KazZfqw8j7NCnaxXjaFz5uMttVsAOOBystJBlK7Rc8hBsA"
+TOKEN_ENV_VAR = "MINERU_API_TOKEN"
 
 API_BASE = "https://mineru.net/api/v4"
 BATCH_UPLOAD_URL = f"{API_BASE}/file-urls/batch"
@@ -24,11 +27,20 @@ POLL_INTERVAL = 30
 MAX_POLL_WAIT = 3600
 
 
-def auth_headers() -> dict:
+def auth_headers() -> dict[str, str]:
+    token = os.getenv(TOKEN_ENV_VAR, "").strip()
+    if not token:
+        raise RuntimeError(f"缺少环境变量 {TOKEN_ENV_VAR}，请先设置 MinerU API token。")
     return {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {TOKEN}",
+        "Authorization": f"Bearer {token}",
     }
+
+
+def _format_error(data: dict[str, object]) -> str:
+    code = data.get("code", "unknown")
+    msg = data.get("msg") or data.get("message") or "unknown"
+    return f"code={code}, msg={msg}"
 
 
 def calc_md5(file_path: Path) -> str:
@@ -68,7 +80,7 @@ def submit_and_upload(pdf_path: Path) -> str:
         if data["code"] == -60018:
             print("  每日解析额度已达上限，请明天再试")
             sys.exit(1)
-        print(f"  提交失败: code={data['code']}, msg={data}")
+        print(f"  提交失败: {_format_error(data)}")
         sys.exit(1)
 
     batch_id = data["data"]["batch_id"]
@@ -101,7 +113,7 @@ def poll_result(batch_id: str) -> dict:
         data = resp.json()
 
         if data["code"] != 0:
-            print(f"  查询失败: {data}")
+            print(f"  查询失败: {_format_error(data)}")
             time.sleep(POLL_INTERVAL)
             continue
 
