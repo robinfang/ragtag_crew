@@ -454,6 +454,13 @@ def _completion_provider_options(model: str) -> dict[str, Any]:
             options["api_key"] = settings.anthropic_api_key
         return options
 
+    if provider == "deepseek":
+        if settings.deepseek_api_key:
+            options["api_key"] = settings.deepseek_api_key
+        if settings.deepseek_api_base:
+            options["api_base"] = settings.deepseek_api_base
+        return options
+
     if provider == "openai":
         if upper_model.startswith("GLM-"):
             if settings.glm_api_key:

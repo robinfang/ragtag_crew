@@ -131,6 +131,24 @@ class CompletionProviderOptionsTests(unittest.TestCase):
             },
         )
 
+    def test_deepseek_model_uses_deepseek_credentials(self) -> None:
+        with (
+            patch("ragtag_crew.llm.settings.deepseek_api_key", "deepseek-key"),
+            patch(
+                "ragtag_crew.llm.settings.deepseek_api_base",
+                "https://api.deepseek.com",
+            ),
+        ):
+            options = _completion_provider_options("deepseek/deepseek-v4-flash")
+
+        self.assertEqual(
+            options,
+            {
+                "api_key": "deepseek-key",
+                "api_base": "https://api.deepseek.com",
+            },
+        )
+
     def test_plain_openai_model_uses_openai_credentials(self) -> None:
         with (
             patch("ragtag_crew.llm.settings.openai_api_key", "openai-key"),

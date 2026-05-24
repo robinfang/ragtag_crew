@@ -25,7 +25,10 @@ class Settings(BaseSettings):
 
     # LLM
     default_model: str = "openai/GLM-5.1"
-    available_models: str = "openai/GLM-5.1,openai/GLM-5-Turbo,openai/gpt-5.4"
+    available_models: str = (
+        "openai/GLM-5.1,openai/GLM-5-Turbo,openai/gpt-5.4,"
+        "deepseek/deepseek-v4-flash,deepseek/deepseek-v4-pro"
+    )
     anthropic_api_key: str = ""
     openai_api_key: str = ""
     openai_api_base: str = ""
@@ -40,6 +43,8 @@ class Settings(BaseSettings):
     codex_refresh_timeout: float = 20.0
     glm_api_key: str = ""
     glm_api_base: str = "https://open.bigmodel.cn/api/coding/paas/v4"
+    deepseek_api_key: str = ""
+    deepseek_api_base: str = "https://api.deepseek.com"
 
     # Agent
     working_dir: str = "."
