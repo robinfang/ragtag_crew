@@ -44,6 +44,7 @@ from ragtag_crew.memory_store import (
 )
 from ragtag_crew.model_validation import validate_model
 from ragtag_crew.prompts import DEFAULT_SYSTEM_PROMPT
+from ragtag_crew.session_cache import SESSION_CACHE, drop_cached_session
 from ragtag_crew.session_routes import (
     SessionRoute,
     detect_session_source,
@@ -66,8 +67,8 @@ from ragtag_crew.tools import ensure_builtin_tools_registered, get_tools_for_pre
 
 log = logging.getLogger(__name__)
 
-# Session routing: session_key -> AgentSession
-_sessions: dict[SessionKey, AgentSession] = {}
+# Session routing: session_key -> AgentSession (shared across frontends)
+_sessions = SESSION_CACHE
 
 
 @dataclass(slots=True)
@@ -257,10 +258,6 @@ def _get_session(chat_id: int) -> AgentSession:
 
 def _save_current_session(chat_id: int, session: AgentSession) -> None:
     save_session(_current_route(chat_id).current_session_key, session)
-
-
-def _delete_current_session(chat_id: int) -> None:
-    delete_session(_current_route(chat_id).current_session_key)
 
 
 def _is_progress_query(text: str) -> bool:
@@ -517,14 +514,31 @@ async def _cmd_new(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         log.warning("Unauthorized /new from user_id=%s", update.effective_user.id)
         return
     chat_id = update.effective_chat.id
-    session = _get_session(chat_id)
+    route = _current_route(chat_id)
+    was_overridden = route.is_overridden
+    session_key = route.current_session_key
+    session = _get_session_by_key(session_key)
     if session.is_busy:
         await update.message.reply_text("Please wait — agent is busy.")
         return
     session.reset()
-    _delete_current_session(chat_id)
-    log.info("[chat %s] /new — session cleared", chat_id)
-    await update.message.reply_text("Session cleared.")
+    delete_session(session_key)
+    drop_cached_session(session_key)
+
+    if was_overridden:
+        route = reset_session_route(
+            frontend="telegram",
+            peer_id=chat_id,
+            default_session_key=_default_session_key(chat_id),
+        )
+
+    _get_session_by_key(route.current_session_key)
+    log.info(
+        "[chat %s] /new — session cleared%s",
+        chat_id,
+        " and route reset" if was_overridden else "",
+    )
+    await update.message.reply_text("Session cleared and reset to default.")
 
 
 async def _cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

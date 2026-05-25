@@ -15,6 +15,7 @@ from ragtag_crew.errors import UserAbortedError
 from ragtag_crew.external import ensure_external_capabilities_initialized
 from ragtag_crew.prompts import DEFAULT_SYSTEM_PROMPT
 from ragtag_crew.runtime_events import RuntimeEvent, ToolExecutionStartEvent
+from ragtag_crew.session_cache import SESSION_CACHE, drop_cached_session
 from ragtag_crew.session_routes import (
     SessionRoute,
     detect_session_source,
@@ -38,7 +39,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-_sessions: dict[str, AgentSession] = {}
+_sessions = SESSION_CACHE
 _active_prompt_tasks: dict[str, asyncio.Task[Any]] = {}
 
 _STATUS_HEARTBEAT_SECS = 20.0
@@ -115,10 +116,6 @@ def _get_active_prompt_task(session_key: str) -> asyncio.Task[Any] | None:
 
 def _save_current_session(user_id: str, session: AgentSession) -> None:
     save_session(_current_route(user_id).current_session_key, session)
-
-
-def _delete_current_session(user_id: str) -> None:
-    delete_session(_current_route(user_id).current_session_key)
 
 
 def _split_weixin_text(text: str, *, limit: int = 1800) -> list[str]:
@@ -340,13 +337,26 @@ def _resolve_session_target(target: str) -> str:
 
 
 async def _cmd_new(bot: Any, message: Any) -> None:
-    session = _get_session(message.user_id)
-    if session.is_busy or _get_active_prompt_task(_current_route(message.user_id).current_session_key):
+    route = _current_route(message.user_id)
+    was_overridden = route.is_overridden
+    session_key = route.current_session_key
+    session = _get_session_by_key(session_key)
+    if session.is_busy or _get_active_prompt_task(session_key):
         await bot.reply(message, "Please wait — agent is busy.")
         return
     session.reset()
-    _delete_current_session(message.user_id)
-    await bot.reply(message, "Session cleared.")
+    delete_session(session_key)
+    drop_cached_session(session_key)
+
+    if was_overridden:
+        route = reset_session_route(
+            frontend="weixin",
+            peer_id=message.user_id,
+            default_session_key=_default_session_key(message.user_id),
+        )
+
+    _get_session_by_key(route.current_session_key)
+    await bot.reply(message, "Session cleared and reset to default.")
 
 
 async def _cmd_cancel(bot: Any, message: Any) -> None:

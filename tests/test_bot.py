@@ -323,9 +323,16 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         session = SimpleNamespace(is_busy=True, reset=AsyncMock())
         bot_module._sessions[100] = session
         update = FakeUpdate(chat_id=100)
+        route = bot_module.SessionRoute(
+            peer_key="telegram:100",
+            current_session_key=100,
+            default_session_key=100,
+            is_overridden=False,
+        )
 
         with (
             patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch("ragtag_crew.telegram.bot._current_route", return_value=route),
             patch("ragtag_crew.telegram.bot.delete_session") as delete_session,
         ):
             await bot_module._cmd_new(update, FakeContext())
@@ -340,15 +347,74 @@ class BotHandlerTests(unittest.IsolatedAsyncioTestCase):
         session = SimpleNamespace(is_busy=False, reset=lambda: None)
         bot_module._sessions[100] = session
         update = FakeUpdate(chat_id=100)
+        route = bot_module.SessionRoute(
+            peer_key="telegram:100",
+            current_session_key=100,
+            default_session_key=100,
+            is_overridden=False,
+        )
 
         with (
             patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch("ragtag_crew.telegram.bot._current_route", return_value=route),
             patch("ragtag_crew.telegram.bot.delete_session") as delete_session,
+            patch(
+                "ragtag_crew.telegram.bot._get_session_by_key",
+                side_effect=[session, SimpleNamespace(is_busy=False)],
+            ) as get_by_key,
         ):
             await bot_module._cmd_new(update, FakeContext())
 
         delete_session.assert_called_once_with(100)
-        self.assertEqual(update.message.reply_calls[0]["text"], "Session cleared.")
+        self.assertEqual(get_by_key.call_args_list, [((100,),), ((100,),)])
+        self.assertEqual(
+            update.message.reply_calls[0]["text"],
+            "Session cleared and reset to default.",
+        )
+
+    async def test_cmd_new_on_overridden_route_resets_session_binding(self) -> None:
+        session = SimpleNamespace(is_busy=False, reset=lambda: None)
+        bot_module._sessions["weixin:abc"] = session
+        update = FakeUpdate(chat_id=100)
+        current_route = bot_module.SessionRoute(
+            peer_key="telegram:100",
+            current_session_key="weixin:abc",
+            default_session_key=100,
+            is_overridden=True,
+        )
+        reset_route = bot_module.SessionRoute(
+            peer_key="telegram:100",
+            current_session_key=100,
+            default_session_key=100,
+            is_overridden=False,
+        )
+
+        with (
+            patch("ragtag_crew.telegram.bot._is_authorized", return_value=True),
+            patch("ragtag_crew.telegram.bot._current_route", return_value=current_route),
+            patch("ragtag_crew.telegram.bot.delete_session") as delete_session,
+            patch(
+                "ragtag_crew.telegram.bot.reset_session_route",
+                return_value=reset_route,
+            ) as reset_session_route,
+            patch(
+                "ragtag_crew.telegram.bot._get_session_by_key",
+                side_effect=[session, SimpleNamespace(is_busy=False)],
+            ) as get_by_key,
+        ):
+            await bot_module._cmd_new(update, FakeContext())
+
+        delete_session.assert_called_once_with("weixin:abc")
+        reset_session_route.assert_called_once_with(
+            frontend="telegram",
+            peer_id=100,
+            default_session_key=100,
+        )
+        self.assertEqual(
+            get_by_key.call_args_list,
+            [(("weixin:abc",),), ((100,),)],
+        )
+        self.assertNotIn("weixin:abc", bot_module._sessions)
 
     async def test_cmd_model_without_args_shows_current_model(self) -> None:
         session = SimpleNamespace(model="openai/GLM-5.1")

@@ -214,6 +214,83 @@ class WeixinBotTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Session routing reset.", reply)
         self.assertIn("/session use <index>", reply)
 
+    async def test_new_command_resets_and_recreates_default_session(self) -> None:
+        bot = FakeWeixinBot()
+        message = FakeMessage("/new")
+        session = SimpleNamespace(is_busy=False, reset=lambda: None)
+        weixin_bot_module._sessions["weixin:wx-1"] = session
+        route = weixin_bot_module.SessionRoute(
+            peer_key="weixin:wx-1",
+            current_session_key="weixin:wx-1",
+            default_session_key="weixin:wx-1",
+            is_overridden=False,
+        )
+
+        with (
+            patch("ragtag_crew.weixin.bot._is_authorized", return_value=True),
+            patch("ragtag_crew.weixin.bot._current_route", return_value=route),
+            patch("ragtag_crew.weixin.bot.delete_session") as delete_session,
+            patch(
+                "ragtag_crew.weixin.bot._get_session_by_key",
+                side_effect=[session, SimpleNamespace(is_busy=False)],
+            ) as get_by_key,
+        ):
+            await weixin_bot_module.handle_incoming_message(bot, message)
+
+        delete_session.assert_called_once_with("weixin:wx-1")
+        self.assertEqual(
+            get_by_key.call_args_list,
+            [(("weixin:wx-1",),), (("weixin:wx-1",),)],
+        )
+        bot.reply.assert_awaited_once_with(
+            message, "Session cleared and reset to default."
+        )
+
+    async def test_new_command_on_overridden_route_resets_binding(self) -> None:
+        bot = FakeWeixinBot()
+        message = FakeMessage("/new")
+        session = SimpleNamespace(is_busy=False, reset=lambda: None)
+        weixin_bot_module._sessions["458749049"] = session
+        current_route = weixin_bot_module.SessionRoute(
+            peer_key="weixin:wx-1",
+            current_session_key="458749049",
+            default_session_key="weixin:wx-1",
+            is_overridden=True,
+        )
+        reset_route = weixin_bot_module.SessionRoute(
+            peer_key="weixin:wx-1",
+            current_session_key="weixin:wx-1",
+            default_session_key="weixin:wx-1",
+            is_overridden=False,
+        )
+
+        with (
+            patch("ragtag_crew.weixin.bot._is_authorized", return_value=True),
+            patch("ragtag_crew.weixin.bot._current_route", return_value=current_route),
+            patch("ragtag_crew.weixin.bot.delete_session") as delete_session,
+            patch(
+                "ragtag_crew.weixin.bot.reset_session_route",
+                return_value=reset_route,
+            ) as reset_session_route,
+            patch(
+                "ragtag_crew.weixin.bot._get_session_by_key",
+                side_effect=[session, SimpleNamespace(is_busy=False)],
+            ) as get_by_key,
+        ):
+            await weixin_bot_module.handle_incoming_message(bot, message)
+
+        delete_session.assert_called_once_with("458749049")
+        reset_session_route.assert_called_once_with(
+            frontend="weixin",
+            peer_id="wx-1",
+            default_session_key="weixin:wx-1",
+        )
+        self.assertEqual(
+            get_by_key.call_args_list,
+            [(("458749049",),), (("weixin:wx-1",),)],
+        )
+        self.assertNotIn("458749049", weixin_bot_module._sessions)
+
     async def test_sessions_command_lists_saved_sessions(self) -> None:
         bot = FakeWeixinBot()
         message = FakeMessage("/sessions")
