@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from contextlib import contextmanager
@@ -141,6 +142,58 @@ class SessionStoreTests(unittest.TestCase):
 
                 self.assertFalse(path.exists())
 
+    def test_cleanup_expired_sessions_tolerates_unlink_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with session_storage(root):
+                path = root / "123.json"
+                path.write_text(
+                    json.dumps({"last_active_at": 1}),
+                    encoding="utf-8",
+                )
+                original_unlink = os.unlink
+
+                def _failing_unlink(p, *args, **kwargs):
+                    if str(p).endswith(".json"):
+                        raise PermissionError("simulated Windows lock")
+                    return original_unlink(p, *args, **kwargs)
+
+                with (
+                    patch("os.unlink", side_effect=_failing_unlink),
+                    patch("ragtag_crew.session_store.time.time", return_value=10_000),
+                ):
+                    cleanup_expired_sessions()
+
+                self.assertTrue(path.exists())
+
+    def test_load_session_tolerates_unlink_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with session_storage(root):
+                path = root / "123.json"
+                path.write_text(
+                    json.dumps(
+                        {
+                            "session_key": "123",
+                            "model": "openai/test",
+                            "tool_preset": "readonly",
+                            "last_active_at": 1,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+
+                def _failing_unlink(p, *args, **kwargs):
+                    raise PermissionError("simulated Windows lock")
+
+                with (
+                    patch("os.unlink", side_effect=_failing_unlink),
+                    patch("ragtag_crew.session_store.time.time", return_value=10_000),
+                ):
+                    restored = load_session(123, default_system_prompt="fallback")
+
+                self.assertIsNone(restored)
+
     def test_corrupt_file_is_ignored(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -199,6 +252,83 @@ class SessionStoreTests(unittest.TestCase):
 
         self.assertEqual(payload["session_key"], "weixin:abc")
         self.assertEqual(payload["session_summary"], "hello")
+
+    def test_load_session_tolerates_missing_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with session_storage(root):
+                (root / "123.json").write_text(
+                    json.dumps(
+                        {
+                            "session_key": "123",
+                            "model": "openai/test",
+                            "tool_preset": "readonly",
+                            "last_active_at": 10_000_000_000,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+
+                restored = load_session(123, default_system_prompt="fallback system")
+
+        self.assertIsNotNone(restored)
+        self.assertEqual(restored.model, "openai/test")
+        self.assertEqual(restored.system_prompt, "fallback system")
+        self.assertEqual(restored.enabled_skills, [])
+        self.assertEqual(restored.messages, [])
+        self.assertEqual(restored.session_summary, "")
+        self.assertFalse(restored.awaiting_plan_confirmation)
+
+    def test_load_then_save_preserves_existing_payload_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with session_storage(root):
+                original_payload = {
+                    "version": 1,
+                    "session_key": "123",
+                    "model": "openai/test",
+                    "tool_preset": "readonly",
+                    "enabled_skills": ["review"],
+                    "system_prompt": "system",
+                    "session_prompt": "session prompt",
+                    "protected_content": "protected",
+                    "compression_blocks": [
+                        {
+                            "block_id": "b1",
+                            "created_at": 1.0,
+                            "message_count": 2,
+                            "summary": "older stuff",
+                        }
+                    ],
+                    "session_summary": "summary",
+                    "summary_updated_at": 1.5,
+                    "recent_message_count": 4,
+                    "browser_mode": "attached",
+                    "browser_attached_confirmed": True,
+                    "planning_enabled": True,
+                    "awaiting_plan_confirmation": True,
+                    "pending_plan_text": "1. inspect",
+                    "pending_plan_request_text": "please fix",
+                    "plan_generated_at": 2.5,
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "last_active_at": 10_000_000_000,
+                }
+                path = root / "123.json"
+                path.write_text(
+                    json.dumps(original_payload, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+
+                restored = load_session(123, default_system_prompt="fallback")
+                assert restored is not None
+                save_session(123, restored)
+                rewritten_payload = json.loads(path.read_text(encoding="utf-8"))
+
+        for key, value in original_payload.items():
+            if key == "last_active_at":
+                self.assertIsInstance(rewritten_payload[key], (int, float))
+                continue
+            self.assertEqual(rewritten_payload[key], value)
 
 
 if __name__ == "__main__":
