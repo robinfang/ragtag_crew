@@ -13,7 +13,15 @@ import time
 from telegram import Message
 from telegram.error import BadRequest, NetworkError, RetryAfter
 
-from ragtag_crew.llm import ToolCall
+from ragtag_crew.runtime_events import (
+    AgentEndEvent,
+    CancelledEvent,
+    ErrorEvent,
+    MessageUpdateEvent,
+    RuntimeEvent,
+    ToolExecutionEndEvent,
+    ToolExecutionStartEvent,
+)
 from ragtag_crew.telegram.html import render_telegram_html
 
 log = logging.getLogger(__name__)
@@ -67,32 +75,30 @@ class TelegramStreamer:
             self._run_worker(), name="ragtag_crew:telegram_stream"
         )
 
-    async def on_event(self, event_type: str, **kwargs) -> None:
+    async def on_event(self, event: RuntimeEvent) -> None:
         """Event callback — wired to AgentSession.subscribe()."""
-        match event_type:
-            case "message_update":
-                self.buffer += kwargs["delta"]
+        match event:
+            case MessageUpdateEvent(delta=delta):
+                self.buffer += delta
                 self._request_flush()
 
-            case "tool_execution_start":
-                tc: ToolCall = kwargs["tool_call"]
+            case ToolExecutionStartEvent(tool_call=tc):
                 self.buffer += f"\n⏳ {tc.name}({_summarize_args(tc.arguments)})\n"
                 self._request_flush()
 
-            case "tool_execution_end":
+            case ToolExecutionEndEvent():
                 # Replace the ⏳ with ✅ inline isn't worth the complexity;
                 # the next message_update will push the text forward anyway.
                 pass
 
-            case "agent_end":
+            case AgentEndEvent():
                 self._request_flush()
 
-            case "cancelled":
+            case CancelledEvent():
                 self.buffer += "\n\n⚠️ 已取消"
                 self._request_flush()
 
-            case "error":
-                err = kwargs.get("error", "Unknown error")
+            case ErrorEvent(error=err):
                 self.buffer += f"\n\n❌ Error: {err}"
                 self._request_flush()
 

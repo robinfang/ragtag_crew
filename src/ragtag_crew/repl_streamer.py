@@ -6,7 +6,16 @@ instead of Telegram message edits.
 
 from __future__ import annotations
 
-from ragtag_crew.llm import ToolCall
+from ragtag_crew.runtime_events import (
+    AgentEndEvent,
+    CancelledEvent,
+    ErrorEvent,
+    MessageEndEvent,
+    MessageUpdateEvent,
+    RuntimeEvent,
+    ToolExecutionEndEvent,
+    ToolExecutionStartEvent,
+)
 
 
 def _summarize_args(args: dict) -> str:
@@ -33,37 +42,33 @@ class ReplStreamer:
     def __init__(self) -> None:
         self.buffer = ""
 
-    async def on_event(self, event_type: str, **kwargs) -> None:
-        match event_type:
-            case "message_update":
-                delta = kwargs["delta"]
+    async def on_event(self, event: RuntimeEvent) -> None:
+        match event:
+            case MessageUpdateEvent(delta=delta):
                 self.buffer += delta
                 print(delta, end="", flush=True)
 
-            case "message_end":
-                content = kwargs.get("content", "")
+            case MessageEndEvent(content=content):
                 if content and not self.buffer.strip():
                     self.buffer = content
                     print(content, end="", flush=True)
 
-            case "tool_execution_start":
-                tc: ToolCall = kwargs["tool_call"]
+            case ToolExecutionStartEvent(tool_call=tc):
                 args_str = _summarize_args(tc.arguments)
                 print(f"\n⏳ {tc.name}({args_str})")
 
-            case "tool_execution_end":
-                result = kwargs.get("result", "")
+            case ToolExecutionEndEvent(result=result):
                 if result:
                     preview = result[:200].replace("\n", " ")
                     suffix = "..." if len(result) > 200 else ""
                     print(f"  ✅ → {preview}{suffix}")
 
-            case "agent_end":
+            case AgentEndEvent():
                 if self.buffer:
                     print()
 
-            case "cancelled":
+            case CancelledEvent():
                 print("\n⚠️ 已取消")
 
-            case "error":
-                print(f"\n❌ {kwargs.get('error', 'Unknown error')}")
+            case ErrorEvent(error=error):
+                print(f"\n❌ {error}")

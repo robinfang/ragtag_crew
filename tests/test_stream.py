@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from telegram.error import BadRequest, NetworkError, RetryAfter
 
+from ragtag_crew.runtime_events import MessageUpdateEvent
 from ragtag_crew.telegram.stream import TelegramStreamer
 
 
@@ -68,7 +69,7 @@ class TelegramStreamerTests(unittest.IsolatedAsyncioTestCase):
         streamer = TelegramStreamer(message)
 
         await asyncio.wait_for(
-            streamer.on_event("message_update", delta="hello"), timeout=0.05
+            streamer.on_event(MessageUpdateEvent(delta="hello")), timeout=0.05
         )
         await asyncio.sleep(0)
 
@@ -108,7 +109,7 @@ class TelegramStreamerTests(unittest.IsolatedAsyncioTestCase):
         streamer = TelegramStreamer(message)
 
         await asyncio.wait_for(
-            streamer.on_event("message_update", delta="hello"), timeout=0.05
+            streamer.on_event(MessageUpdateEvent(delta="hello")), timeout=0.05
         )
         await asyncio.sleep(0)
 
@@ -123,7 +124,7 @@ class TelegramStreamerTests(unittest.IsolatedAsyncioTestCase):
         message = ShutdownMessage()
         streamer = TelegramStreamer(message)
 
-        await streamer.on_event("message_update", delta="hello")
+        await streamer.on_event(MessageUpdateEvent(delta="hello"))
         await asyncio.sleep(0)
         await asyncio.wait_for(streamer.finalize(), timeout=0.2)
 

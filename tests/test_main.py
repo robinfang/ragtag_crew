@@ -7,6 +7,12 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from ragtag_crew import main as main_module
+from ragtag_crew.runtime_events import (
+    AgentEndEvent,
+    MessageEndEvent,
+    MessageUpdateEvent,
+    ToolExecutionStartEvent,
+)
 
 
 class FakeReplSession:
@@ -51,12 +57,15 @@ class FakeReplSession:
         self.prompt_calls.append(text)
         for cb in self._callbacks:
             await cb(
-                "tool_execution_start",
-                tool_call=SimpleNamespace(name="read", arguments={"path": "README.md"}),
+                ToolExecutionStartEvent(
+                    tool_call=SimpleNamespace(
+                        name="read", arguments={"path": "README.md"}
+                    )
+                )
             )
-            await cb("message_update", delta="answer")
-            await cb("message_end", content="answer")
-            await cb("agent_end")
+            await cb(MessageUpdateEvent(delta="answer"))
+            await cb(MessageEndEvent(content="answer"))
+            await cb(AgentEndEvent(content="answer"))
         return "answer"
 
 

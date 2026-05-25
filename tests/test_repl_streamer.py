@@ -6,6 +6,15 @@ from contextlib import redirect_stdout
 from types import SimpleNamespace
 
 from ragtag_crew.repl_streamer import ReplStreamer, _summarize_args
+from ragtag_crew.runtime_events import (
+    AgentEndEvent,
+    CancelledEvent,
+    ErrorEvent,
+    MessageEndEvent,
+    MessageUpdateEvent,
+    ToolExecutionEndEvent,
+    ToolExecutionStartEvent,
+)
 
 
 class SummarizeArgsTests(unittest.TestCase):
@@ -31,8 +40,8 @@ class ReplStreamerTests(unittest.IsolatedAsyncioTestCase):
     async def test_message_update_prints_delta(self) -> None:
         streamer, buf = self._make_streamer()
         with redirect_stdout(buf):
-            await streamer.on_event("message_update", delta="hello ")
-            await streamer.on_event("message_update", delta="world")
+            await streamer.on_event(MessageUpdateEvent(delta="hello "))
+            await streamer.on_event(MessageUpdateEvent(delta="world"))
         self.assertEqual(buf.getvalue(), "hello world")
         self.assertEqual(streamer.buffer, "hello world")
 
@@ -40,16 +49,17 @@ class ReplStreamerTests(unittest.IsolatedAsyncioTestCase):
         streamer, buf = self._make_streamer()
         tc = SimpleNamespace(name="read", arguments={"path": "README.md"})
         with redirect_stdout(buf):
-            await streamer.on_event("tool_execution_start", tool_call=tc)
+            await streamer.on_event(ToolExecutionStartEvent(tool_call=tc))
         self.assertIn("⏳ read(path=README.md)", buf.getvalue())
 
     async def test_tool_execution_end_short_result(self) -> None:
         streamer, buf = self._make_streamer()
         with redirect_stdout(buf):
             await streamer.on_event(
-                "tool_execution_end",
-                tool_call=SimpleNamespace(name="read", arguments={}),
-                result="short result",
+                ToolExecutionEndEvent(
+                    tool_call=SimpleNamespace(name="read", arguments={}),
+                    result="short result",
+                )
             )
         out = buf.getvalue()
         self.assertIn("✅", out)
@@ -61,9 +71,10 @@ class ReplStreamerTests(unittest.IsolatedAsyncioTestCase):
         long_result = "x" * 300
         with redirect_stdout(buf):
             await streamer.on_event(
-                "tool_execution_end",
-                tool_call=SimpleNamespace(name="read", arguments={}),
-                result=long_result,
+                ToolExecutionEndEvent(
+                    tool_call=SimpleNamespace(name="read", arguments={}),
+                    result=long_result,
+                )
             )
         out = buf.getvalue()
         self.assertIn("✅", out)
@@ -73,57 +84,58 @@ class ReplStreamerTests(unittest.IsolatedAsyncioTestCase):
         streamer, buf = self._make_streamer()
         with redirect_stdout(buf):
             await streamer.on_event(
-                "tool_execution_end",
-                tool_call=SimpleNamespace(name="bash", arguments={}),
-                result="",
+                ToolExecutionEndEvent(
+                    tool_call=SimpleNamespace(name="bash", arguments={}),
+                    result="",
+                )
             )
         self.assertEqual(buf.getvalue(), "")
 
     async def test_agent_end_prints_newline_when_buffer_has_content(self) -> None:
         streamer, buf = self._make_streamer()
         with redirect_stdout(buf):
-            await streamer.on_event("message_update", delta="some text")
-            await streamer.on_event("agent_end")
+            await streamer.on_event(MessageUpdateEvent(delta="some text"))
+            await streamer.on_event(AgentEndEvent(content=""))
         self.assertTrue(buf.getvalue().endswith("\n"))
 
     async def test_agent_end_no_newline_when_buffer_empty(self) -> None:
         streamer, buf = self._make_streamer()
         with redirect_stdout(buf):
-            await streamer.on_event("agent_end")
+            await streamer.on_event(AgentEndEvent(content=""))
         self.assertEqual(buf.getvalue(), "")
 
     async def test_cancelled(self) -> None:
         streamer, buf = self._make_streamer()
         with redirect_stdout(buf):
-            await streamer.on_event("cancelled")
+            await streamer.on_event(CancelledEvent())
         self.assertIn("⚠️ 已取消", buf.getvalue())
 
     async def test_error(self) -> None:
         streamer, buf = self._make_streamer()
         with redirect_stdout(buf):
-            await streamer.on_event("error", error=RuntimeError("boom"))
+            await streamer.on_event(ErrorEvent(error=RuntimeError("boom")))
         self.assertIn("❌", buf.getvalue())
         self.assertIn("boom", buf.getvalue())
 
-    async def test_error_no_error_kwarg(self) -> None:
+    async def test_error_no_detail(self) -> None:
         streamer, buf = self._make_streamer()
         with redirect_stdout(buf):
-            await streamer.on_event("error")
+            await streamer.on_event(ErrorEvent(error=RuntimeError("Unknown error")))
         self.assertIn("❌", buf.getvalue())
         self.assertIn("Unknown error", buf.getvalue())
 
     async def test_message_end_fallback_when_buffer_empty(self) -> None:
         streamer, buf = self._make_streamer()
         with redirect_stdout(buf):
-            await streamer.on_event("message_end", content="final answer")
+            await streamer.on_event(MessageEndEvent(content="final answer"))
         self.assertEqual(streamer.buffer, "final answer")
         self.assertIn("final answer", buf.getvalue())
 
     async def test_message_end_no_print_when_buffer_has_content(self) -> None:
         streamer, buf = self._make_streamer()
         with redirect_stdout(buf):
-            await streamer.on_event("message_update", delta="partial")
-            await streamer.on_event("message_end", content="partial answer")
+            await streamer.on_event(MessageUpdateEvent(delta="partial"))
+            await streamer.on_event(MessageEndEvent(content="partial answer"))
         out = buf.getvalue()
         self.assertEqual(out, "partial")
 
@@ -131,13 +143,13 @@ class ReplStreamerTests(unittest.IsolatedAsyncioTestCase):
         streamer, buf = self._make_streamer()
         tc = SimpleNamespace(name="read", arguments={"path": "main.py"})
         with redirect_stdout(buf):
-            await streamer.on_event("message_update", delta="Let me read the file.\n")
-            await streamer.on_event("tool_execution_start", tool_call=tc)
+            await streamer.on_event(MessageUpdateEvent(delta="Let me read the file.\n"))
+            await streamer.on_event(ToolExecutionStartEvent(tool_call=tc))
             await streamer.on_event(
-                "tool_execution_end", tool_call=tc, result="file contents here"
+                ToolExecutionEndEvent(tool_call=tc, result="file contents here")
             )
-            await streamer.on_event("message_update", delta="The file looks good.")
-            await streamer.on_event("agent_end")
+            await streamer.on_event(MessageUpdateEvent(delta="The file looks good."))
+            await streamer.on_event(AgentEndEvent(content=""))
         out = buf.getvalue()
         self.assertIn("Let me read the file.", out)
         self.assertIn("⏳ read(path=main.py)", out)

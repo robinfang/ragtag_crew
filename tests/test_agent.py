@@ -9,6 +9,14 @@ from unittest.mock import patch
 from ragtag_crew.agent import AgentSession
 from ragtag_crew.errors import LLMChunkTimeoutError, TurnTimeoutError
 from ragtag_crew.llm import LLMResponse, ToolCall
+from ragtag_crew.runtime_events import (
+    AgentEndEvent,
+    AgentStartEvent,
+    MessageEndEvent,
+    MessageStartEvent,
+    TurnEndEvent,
+    TurnStartEvent,
+)
 from ragtag_crew.tools import Tool
 
 
@@ -251,6 +259,37 @@ class AgentSessionTests(unittest.IsolatedAsyncioTestCase):
         tool_messages = [m for m in session.messages if m.get("role") == "tool"]
         self.assertEqual(len(tool_messages), 1)
         self.assertEqual(tool_messages[0]["tool_name"], "read")
+
+    async def test_prompt_emits_typed_events_in_order(self) -> None:
+        session = AgentSession(
+            model="openai/GLM-5.1",
+            tools=[Tool("noop", "noop", {"type": "object"}, _noop_tool)],
+            planning_enabled=False,
+        )
+        seen_types: list[str] = []
+
+        async def collect(event) -> None:  # type: ignore[no-untyped-def]
+            seen_types.append(type(event).__name__)
+
+        async def ok_stream(**kwargs):  # type: ignore[no-untyped-def]
+            return LLMResponse(content="done")
+
+        session.subscribe(collect)
+        with patch("ragtag_crew.agent.stream_chat", side_effect=ok_stream):
+            result = await session.prompt("hello")
+
+        self.assertEqual(result, "done")
+        self.assertEqual(
+            seen_types,
+            [
+                AgentStartEvent.__name__,
+                TurnStartEvent.__name__,
+                MessageStartEvent.__name__,
+                MessageEndEvent.__name__,
+                TurnEndEvent.__name__,
+                AgentEndEvent.__name__,
+            ],
+        )
 
     async def test_new_request_while_waiting_plan_restarts_planning(self) -> None:
         session = AgentSession(

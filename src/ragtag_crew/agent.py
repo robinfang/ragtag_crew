@@ -10,7 +10,7 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any, Callable, Awaitable
+from typing import Any, Awaitable, Callable
 
 from ragtag_crew.config import settings
 from ragtag_crew.context_builder import build_system_prompt
@@ -23,6 +23,20 @@ from ragtag_crew.errors import (
 from ragtag_crew.external.browser_agent import browser_execution_context
 from ragtag_crew.llm import stream_chat, LLMResponse, ToolCall
 from ragtag_crew.memory_store import append_memory_note_if_missing
+from ragtag_crew.runtime_events import (
+    AgentEndEvent,
+    AgentStartEvent,
+    CancelledEvent,
+    ErrorEvent,
+    MessageEndEvent,
+    MessageStartEvent,
+    MessageUpdateEvent,
+    RuntimeEvent,
+    ToolExecutionEndEvent,
+    ToolExecutionStartEvent,
+    TurnEndEvent,
+    TurnStartEvent,
+)
 from ragtag_crew.session_summary import (
     _clip_text,
     _extract_external_refs,
@@ -36,7 +50,7 @@ from ragtag_crew.tools import Tool, build_tool_schemas, get_tool
 log = logging.getLogger(__name__)
 
 # Type alias for event callbacks.
-EventCallback = Callable[..., Awaitable[None]]
+EventCallback = Callable[[RuntimeEvent], Awaitable[None]]
 
 _PLAN_ACTION_KEYWORDS = (
     "implement",
@@ -250,12 +264,14 @@ class AgentSession:
     def unsubscribe(self, cb: EventCallback) -> None:
         self._callbacks = [c for c in self._callbacks if c is not cb]
 
-    async def _emit(self, event_type: str, **kwargs: Any) -> None:
+    async def _emit(self, event: RuntimeEvent) -> None:
         for cb in self._callbacks:
             try:
-                await cb(event_type, **kwargs)
+                await cb(event)
             except Exception:
-                log.exception("Error in event callback for %s", event_type)
+                log.exception(
+                    "Error in event callback for %s", type(event).__name__
+                )
 
     # -- control ------------------------------------------------------------
 
@@ -334,9 +350,10 @@ class AgentSession:
         msg_before_prompt = len(self.messages) - 1
 
         await self._emit(
-            "agent_start",
-            prompt_phase=prompt_phase,
-            awaiting_plan_confirmation_at_start=awaiting_plan_confirmation_at_start,
+            AgentStartEvent(
+                prompt_phase=prompt_phase,
+                awaiting_plan_confirmation_at_start=awaiting_plan_confirmation_at_start,
+            )
         )
         final_content = ""
 
@@ -350,16 +367,16 @@ class AgentSession:
         except (LLMTimeoutError, LLMChunkTimeoutError):
             raise
         except UserAbortedError:
-            await self._emit("cancelled")
+            await self._emit(CancelledEvent())
             raise
         except asyncio.TimeoutError as exc:
             self._abort_event.set()
             timeout_error = TurnTimeoutError(settings.turn_timeout)
-            await self._emit("error", error=timeout_error)
+            await self._emit(ErrorEvent(error=timeout_error))
             raise timeout_error from exc
         except Exception as exc:
             log.exception("Agent loop error")
-            await self._emit("error", error=exc)
+            await self._emit(ErrorEvent(error=exc))
             raise
         else:
             if (
@@ -377,13 +394,13 @@ class AgentSession:
             self._active_turn = 0
             self._active_tool_name = None
             self._active_request_text = ""
-            await self._emit("agent_end", content=final_content)
+            await self._emit(AgentEndEvent(content=final_content))
 
     async def _on_text_delta(self, delta: str) -> None:
         if delta:
             preview = self._response_preview + delta
             self._response_preview = self._clip_progress_text(preview, 160)
-        await self._emit("message_update", delta=delta)
+        await self._emit(MessageUpdateEvent(delta=delta))
 
     @staticmethod
     def _clip_progress_text(text: str, limit: int) -> str:
@@ -507,8 +524,8 @@ class AgentSession:
     async def _run_planning_phase(self) -> str:
         turn = 1
         self._active_turn = turn
-        await self._emit("turn_start", turn=turn, tools_enabled=False)
-        await self._emit("message_start")
+        await self._emit(TurnStartEvent(turn=turn, tools_enabled=False))
+        await self._emit(MessageStartEvent())
 
         try:
             response: LLMResponse = await stream_chat(
@@ -522,9 +539,9 @@ class AgentSession:
             response = exc.partial_response or LLMResponse()
             if response.content:
                 self._response_preview = self._clip_progress_text(response.content, 160)
-            await self._emit("message_end", content=response.content)
+            await self._emit(MessageEndEvent(content=response.content))
             self._append_assistant_message(response)
-            await self._emit("turn_end", turn=turn)
+            await self._emit(TurnEndEvent(turn=turn))
             self._completed_turns = turn
             raise
 
@@ -536,9 +553,9 @@ class AgentSession:
         latest_user_text = self.messages[-1].get("content", "") if self.messages else ""
         self.pending_plan_request_text = latest_user_text if isinstance(latest_user_text, str) else ""
         self.plan_generated_at = time.time()
-        await self._emit("message_end", content=content)
+        await self._emit(MessageEndEvent(content=content))
         self._append_assistant_message(response)
-        await self._emit("turn_end", turn=turn)
+        await self._emit(TurnEndEvent(turn=turn))
         self._completed_turns = turn
         return content
 
@@ -683,7 +700,7 @@ class AgentSession:
         except (LLMTimeoutError, LLMChunkTimeoutError):
             raise
         except UserAbortedError:
-            await self._emit("cancelled")
+            await self._emit(CancelledEvent())
             raise
         except asyncio.TimeoutError:
             self._abort_event.set()
@@ -702,8 +719,10 @@ class AgentSession:
                 raise UserAbortedError()
 
             self._active_turn = turn
-            await self._emit("turn_start", turn=turn, tools_enabled=bool(tool_schemas))
-            await self._emit("message_start")
+            await self._emit(
+                TurnStartEvent(turn=turn, tools_enabled=bool(tool_schemas))
+            )
+            await self._emit(MessageStartEvent())
 
             try:
                 response: LLMResponse = await stream_chat(
@@ -719,25 +738,25 @@ class AgentSession:
                     self._response_preview = self._clip_progress_text(
                         response.content, 160
                     )
-                await self._emit("message_end", content=response.content)
+                await self._emit(MessageEndEvent(content=response.content))
                 self._append_assistant_message(response)
                 last_content = response.content
                 raise
 
             if response.content:
                 self._response_preview = self._clip_progress_text(response.content, 160)
-            await self._emit("message_end", content=response.content)
+            await self._emit(MessageEndEvent(content=response.content))
 
             self._append_assistant_message(response)
 
             last_content = response.content
 
             if self._abort_event.is_set():
-                await self._emit("turn_end", turn=turn)
+                await self._emit(TurnEndEvent(turn=turn))
                 raise UserAbortedError()
 
             if not response.tool_calls:
-                await self._emit("turn_end", turn=turn)
+                await self._emit(TurnEndEvent(turn=turn))
                 break
 
             for tc in response.tool_calls:
@@ -745,12 +764,12 @@ class AgentSession:
                     raise UserAbortedError()
 
                 self._active_tool_name = tc.name
-                await self._emit("tool_execution_start", tool_call=tc)
+                await self._emit(ToolExecutionStartEvent(tool_call=tc))
                 result = await self._execute_tool(tc)
                 self._active_tool_name = None
                 self._last_tool_name = tc.name
                 self._completed_tools += 1
-                await self._emit("tool_execution_end", tool_call=tc, result=result)
+                await self._emit(ToolExecutionEndEvent(tool_call=tc, result=result))
 
                 tool_meta = get_tool(tc.name)
                 await self._maybe_capture_external_memory(tool_meta, result)
@@ -769,7 +788,7 @@ class AgentSession:
                     }
                 )
 
-            await self._emit("turn_end", turn=turn)
+            await self._emit(TurnEndEvent(turn=turn))
             self._completed_turns = turn
         else:
             log.warning("Agent loop hit max_turns (%d)", settings.max_turns)

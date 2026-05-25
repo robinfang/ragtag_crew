@@ -14,6 +14,7 @@ from ragtag_crew.config import settings
 from ragtag_crew.errors import UserAbortedError
 from ragtag_crew.external import ensure_external_capabilities_initialized
 from ragtag_crew.prompts import DEFAULT_SYSTEM_PROMPT
+from ragtag_crew.runtime_events import RuntimeEvent, ToolExecutionStartEvent
 from ragtag_crew.session_routes import (
     SessionRoute,
     detect_session_source,
@@ -183,12 +184,13 @@ class WeixinProgressNotifier:
             pass
         self._heartbeat_task = None
 
-    async def on_event(self, event_type: str, **kwargs: Any) -> None:
-        if event_type != "tool_execution_start":
-            return
-        tool_call = kwargs.get("tool_call")
-        tool_name = getattr(tool_call, "name", "unknown")
-        await self._send_status(f"正在执行工具: {tool_name}", force=True)
+    async def on_event(self, event: RuntimeEvent) -> None:
+        match event:
+            case ToolExecutionStartEvent(tool_call=tool_call):
+                tool_name = getattr(tool_call, "name", "unknown")
+                await self._send_status(f"正在执行工具: {tool_name}", force=True)
+            case _:
+                return
 
     async def _heartbeat_loop(self) -> None:
         while True:
