@@ -15,6 +15,7 @@ dependencies = [
     "mcp>=1.17.0",
     "pydantic-settings>=2.0",
     "watchfiles>=0.20",
+    "pymupdf>=1.25.0",
 ]
 
 [project.scripts]
