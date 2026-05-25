@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     bash_timeout: int = 30
     max_turns: int = 20
     skills_dir: str = "skills"
+    default_skills: str = "invoice"
     project_context_file: str = "PROJECT.md"
     user_context_file: str = "USER.local.md"
     memory_index_file: str = "MEMORY.md"
@@ -161,6 +162,11 @@ class Settings(BaseSettings):
         if not self.available_models.strip():
             return []
         return [m.strip() for m in self.available_models.split(",") if m.strip()]
+
+    def get_default_skills(self) -> list[str]:
+        if not self.default_skills.strip():
+            return []
+        return [s.strip() for s in self.default_skills.split(",") if s.strip()]
 
     def get_weixin_allowed_user_ids(self) -> set[str]:
         if not self.weixin_allowed_user_ids.strip():

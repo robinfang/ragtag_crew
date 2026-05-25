@@ -246,7 +246,7 @@ def _get_session_by_key(session_key: SessionKey) -> AgentSession:
                 tools=get_tools_for_preset(settings.default_tool_preset),
                 system_prompt=DEFAULT_SYSTEM_PROMPT,
                 tool_preset=settings.default_tool_preset,
-                enabled_skills=[],
+                enabled_skills=settings.get_default_skills(),
                 browser_mode=settings.browser_mode_default,
             )
     return _sessions[session_key]
