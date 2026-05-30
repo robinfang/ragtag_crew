@@ -1,7 +1,7 @@
 # 草台班子 · ragtag_crew
 
 > 单用户、自托管、本机运行的 AI coding agent。
->
+> 
 > 用 Python 自建 agent loop，把本地 agent 接到 Telegram、微信和 REPL；默认走你自己的 API key，也可复用 OpenCode 的 Codex / ChatGPT 登录态。
 
 ## 当前定位
@@ -15,20 +15,20 @@
 
 ### 前端入口
 
-| 入口 | 状态 | 说明 |
-| --- | --- | --- |
-| Telegram | stable | 主入口；流式输出、后台执行、命令集最完整 |
-| 微信 | stable | 后台执行 + 主动通知；命令集更精简，不做 Telegram 式单消息流式编辑 |
-| REPL | dev | 开发 / 调试入口；支持流式输出、基础命令和会话持久化 |
+| 入口       | 状态     | 说明                                      |
+| -------- | ------ | --------------------------------------- |
+| Telegram | stable | 主入口；流式输出、后台执行、命令集最完整                    |
+| 微信       | stable | 后台执行 + 主动通知；命令集更精简，不做 Telegram 式单消息流式编辑 |
+| REPL     | dev    | 开发 / 调试入口；支持流式输出、基础命令和会话持久化             |
 
 ### 核心能力
 
-| 能力 | 状态 | 说明 |
-| --- | --- | --- |
-| Plan mode | stable | 两阶段协议；用户确认前不执行工具 |
-| 会话与上下文 | stable | session 持久化、路由、压缩、记忆已可用 |
-| 外部能力 | optional | `MCP`、固定 `OpenAPI`、`web_search`、Everything 按配置启用 |
-| 浏览器能力 | experimental | 基于 `agent-browser`；attached 模式需显式确认 |
+| 能力        | 状态           | 说明                                               |
+| --------- | ------------ | ------------------------------------------------ |
+| Plan mode | stable       | 两阶段协议；用户确认前不执行工具                                 |
+| 会话与上下文    | stable       | session 持久化、路由、压缩、记忆已可用                          |
+| 外部能力      | optional     | `MCP`、固定 `OpenAPI`、`web_search`、Everything 按配置启用 |
+| 浏览器能力     | experimental | 基于 `agent-browser`；attached 模式需显式确认              |
 
 ## 快速开始
 
@@ -137,6 +137,7 @@ ragtag_crew/
 │       ├── weixin/             # 微信接入层
 │       ├── external/           # MCP / OpenAPI / web_search / Everything / browser
 │       └── tools/              # file / shell / search / workspace tools
+├── examples/             # 自动生成的案例脚本
 ├── tests/
 ├── docs/
 ├── skills/
@@ -145,6 +146,14 @@ ragtag_crew/
 ├── MEMORY.md
 └── .env.example
 ```
+
+## 案例
+
+`examples/` 中有 ragtag_crew 按需生成的教学 PDF 脚本——单词卡片、歌词排版、数学练习题。
+
+用户只需用自然语言描述需求，ragtag_crew 就会自动编写、调试、执行脚本并交付结果。这些脚本可直接复用、修改参数，或作为新脚本的起点。
+
+详见 [examples/](examples/). 目录中的脚本可复制到其他项目使用，也可以用 ragtag_crew 按需重新生成。
 
 ## 文档导航
 
