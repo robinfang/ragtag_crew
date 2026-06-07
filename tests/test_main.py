@@ -554,7 +554,7 @@ class MainReplTests(unittest.IsolatedAsyncioTestCase):
             ),
             patch("ragtag_crew.agent.AgentSession", FakeReplSession),
             patch("ragtag_crew.session_store.load_session", return_value=None),
-            patch("ragtag_crew.session_store.save_session") as mock_save,
+            patch("ragtag_crew.session_store.save_session"),
             patch("ragtag_crew.session_store.delete_session") as mock_delete,
             patch("builtins.input", side_effect=["/new", "/quit"]),
             redirect_stdout(stdout),

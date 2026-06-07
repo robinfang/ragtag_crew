@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import platform
-from pathlib import Path
 
 from ragtag_crew.config import settings
 from ragtag_crew.external._utils import truncate_output

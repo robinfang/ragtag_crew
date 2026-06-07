@@ -138,7 +138,7 @@ def poll_result(batch_id: str) -> dict:
 
 def download_and_extract(result_item: dict, output_path: Path) -> None:
     zip_url = result_item["full_zip_url"]
-    print(f"  下载结果 ZIP...")
+    print("  下载结果 ZIP...")
 
     resp = requests.get(zip_url, timeout=120)
     resp.raise_for_status()

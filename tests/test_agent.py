@@ -543,6 +543,56 @@ class AgentSessionTests(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(len(verify_msgs), 1)
 
+    async def test_verify_phase_returns_visible_failure_on_error(self) -> None:
+        call_count = 0
+
+        async def write_done_then_verify_error(**kwargs):  # type: ignore[no-untyped-def]
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return LLMResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(
+                            id="c1",
+                            name="write_file",
+                            arguments={"path": "test.py", "content": "x"},
+                        )
+                    ],
+                )
+            if call_count == 2:
+                return LLMResponse(content="draft done")
+            raise RuntimeError("verify backend unavailable")
+
+        async def noop_execute(**kwargs):  # type: ignore[no-untyped-def]
+            return "file written"
+
+        write_tool = Tool("write_file", "write", {"type": "object"}, noop_execute)
+
+        with (
+            patch("ragtag_crew.agent.get_tool", return_value=write_tool),
+            patch(
+                "ragtag_crew.agent.stream_chat",
+                side_effect=write_done_then_verify_error,
+            ),
+            patch("ragtag_crew.agent.settings.verify_enabled", True),
+            patch("ragtag_crew.agent.settings.verify_commands", "pytest"),
+            patch("ragtag_crew.agent.settings.verify_max_turns", 1),
+        ):
+            session = AgentSession(
+                model="openai/GLM-5.1",
+                tools=[write_tool],
+                planning_enabled=False,
+            )
+            result = await session.prompt("write something")
+
+        self.assertIn("自动验证未完成", result)
+        self.assertIn("RuntimeError: verify backend unavailable", result)
+        verify_msgs = [
+            m for m in session.messages if "验证" in (m.get("content") or "")
+        ]
+        self.assertEqual(len(verify_msgs), 1)
+
     async def test_verify_phase_not_injected_when_disabled(self) -> None:
         call_count = 0
 

@@ -34,7 +34,6 @@ from ragtag_crew.tools import ensure_builtin_tools_registered, get_tools_for_pre
 from ragtag_crew.trace import TraceCollector
 
 if TYPE_CHECKING:
-    from weixin_bot import WeixinBot
     from weixin_bot.types import IncomingMessage
 
 log = logging.getLogger(__name__)

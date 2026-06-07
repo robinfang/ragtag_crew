@@ -136,7 +136,7 @@ async def _grep_with_rg(
     except asyncio.TimeoutError:
         proc.kill()
         await proc.communicate()
-        return f"ERROR: ripgrep timed out after 30s."
+        return "ERROR: ripgrep timed out after 30s."
 
     if proc.returncode not in (0, 1):
         error = (
@@ -239,7 +239,7 @@ async def _find_with_rg(
     except asyncio.TimeoutError:
         proc.kill()
         await proc.communicate()
-        return f"ERROR: ripgrep timed out after 30s."
+        return "ERROR: ripgrep timed out after 30s."
 
     if proc.returncode not in (0, 1):
         error = (

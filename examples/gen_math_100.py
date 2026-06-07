@@ -1,4 +1,5 @@
-import random, os
+import random
+import os
 from fpdf import FPDF
 
 out_dir = os.path.dirname(os.path.abspath(__file__))

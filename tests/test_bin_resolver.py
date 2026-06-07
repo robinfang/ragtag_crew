@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import shutil
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from ragtag_crew.config import settings
 from ragtag_crew.tools import bin_resolver as br

@@ -705,9 +705,13 @@ class AgentSession:
         except asyncio.TimeoutError:
             self._abort_event.set()
             raise
-        except Exception:
-            log.exception("[verify] verification phase error, ignoring")
-            content = self._response_preview or ""
+        except Exception as exc:
+            log.exception("[verify] verification phase error")
+            content = (
+                "自动验证未完成："
+                f"{type(exc).__name__}: {exc}\n"
+                "修改已经产生，但需要手动运行验证命令确认结果。"
+            )
         return content or self._response_preview or ""
 
     async def _run_loop(self, max_turns: int | None = None) -> str:

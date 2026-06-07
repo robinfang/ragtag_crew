@@ -89,8 +89,7 @@ def _resolve_server_cwd(server: MCPServerConfig) -> str | None:
 
 
 async def _list_tools_for_server(server: MCPServerConfig) -> list[Any]:
-    from mcp import ClientSession, StdioServerParameters
-    from mcp.client.stdio import stdio_client
+    from mcp import StdioServerParameters
 
     params = StdioServerParameters(
         command=server.command,
@@ -139,8 +138,7 @@ def _format_mcp_content_item(item: Any) -> str:
 async def _call_tool_on_server(
     server: MCPServerConfig, remote_tool_name: str, arguments: dict[str, Any]
 ) -> str:
-    from mcp import ClientSession, StdioServerParameters
-    from mcp.client.stdio import stdio_client
+    from mcp import StdioServerParameters
 
     params = StdioServerParameters(
         command=server.command,

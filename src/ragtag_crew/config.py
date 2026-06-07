@@ -79,7 +79,7 @@ class Settings(BaseSettings):
     auto_memory_precompact_max_excerpt_chars: int = 200
 
     # Verify (two-stage: draft + verify)
-    verify_enabled: bool = False
+    verify_enabled: bool = True
     verify_max_turns: int = 3
     verify_commands: str = "ruff check . && pytest tests/ -x -q"
     verify_prompt: str = (

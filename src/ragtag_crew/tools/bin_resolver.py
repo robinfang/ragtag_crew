@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import platform
 import shutil
+import tarfile
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -167,8 +168,6 @@ def _extract_binary(archive: Path, binary_name: str, dest: Path) -> None:
         raise
     except (zipfile.BadZipFile, Exception):
         pass
-
-    import tarfile
 
     with tarfile.open(archive, "r:*") as tf:
         _extract_from_tar(tf, binary_name, dest)

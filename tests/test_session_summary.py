@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import pytest
 
 from ragtag_crew.session_summary import (
     _clip,

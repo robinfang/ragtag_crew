@@ -39,7 +39,6 @@ splits = [
     (7059,None, 'glossary-and-index'),
 ]
 
-import re
 for start, end, slug in splits:
     end = end if end is not None else len(lines)
     content = '\n'.join(lines[start:end]).strip()

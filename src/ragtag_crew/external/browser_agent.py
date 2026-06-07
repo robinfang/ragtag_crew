@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Iterator
 from urllib.parse import quote, urlparse
 
 from ragtag_crew.config import settings

@@ -11,7 +11,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from ragtag_crew.config import settings
-from ragtag_crew.tools.path_utils import display_path, get_working_dir, resolve_path
+from ragtag_crew.tools.path_utils import display_path, resolve_path
 
 WORKSPACE_META_FILENAME = ".workspace.json"
 WORKSPACE_KINDS = {"tmp", "script"}

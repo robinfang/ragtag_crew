@@ -41,7 +41,7 @@
 - `session_routes` 已落地，支持“当前聊天窗口 -> session_key”绑定和跨端手动共享会话
 - `/help`、`/sessions`、`/session` 已接入 Telegram 与微信
 - `Execution Principles` 已注入运行时上下文，明确要求先确认歧义、优先最小改动并以验证收尾
-- 两阶段调用（`draft + verify`）已具备基础版，但默认仍关闭
+- 两阶段调用（`draft + verify`）已默认开启；修改文件后会按配置进入验证 loop
 - 固定 OpenAPI 工具接入（paper-search + paper-collector）
 - 环境引导（Workspace Snapshot / env bootstrap）已落地
 - 外部能力初始化已具备超时保护、日志化、部分成功保留与失败后自动重试
@@ -53,7 +53,7 @@
 
 当前新的主线已经从“接入更多能力”转向：
 
-- 把 `draft + verify` 从基础版推进为默认可靠能力
+- 基于真实使用继续打磨 `draft + verify` 的默认验证命令与长会话表现
 - 补齐搜索工具链工程化闭环（尤其 `rg` 自动发现/下载与 `fd`）
 - 明确外部结果进入 `session_summary` / `memory` 的规则
 - 补 trace 查询、CI 与更完整的控制面
@@ -323,9 +323,9 @@
 - ✅ `/cancel` 显式确认反馈
 - ✅ Telegram 表格渲染（代码块方案）
 - ✅ 历史查询 CLI
-- ✅ 两阶段调用（基础版）
+- ✅ 两阶段调用（默认开启）
 - ✅ REPL 实时流式输出（ReplStreamer）+ 会话持久化 + 共用系统提示词
-- 待做：trace 查询入口、最小 CI、verify 默认化与技能/外部能力契约补全文档
+- 待做：trace 查询入口、最小 CI、技能/外部能力契约补全文档
 
 ### M8：上下文系统高级能力成熟
 

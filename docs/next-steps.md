@@ -1,6 +1,6 @@
 # 下一步工作分析
 
-> 更新日期：2026-04-15
+> 更新日期：2026-06-07
 > 依据：项目文档（roadmap、context-system-design、claude-code-harness-analysis、research-agent-toolchain、pending-decisions）+ 源码深度审查
 
 ## 1. 当前状态总览
@@ -14,20 +14,20 @@
 | M3 | Windows Everything 搜索适配 | ✅ |
 | M4 | MCP client | ✅ |
 | M5 | 固定 OpenAPI 工具 | ✅ |
-| M7（部分） | 执行轨迹收集、/cancel、/model、dev 模式、Planning 机制、运行时进度追踪、env bootstrap、表格渲染、历史查询 CLI、微信最小前端、session routes、`/sessions` `/session`、两阶段调用基础版 | ✅ |
+| M7（部分） | 执行轨迹收集、/cancel、/model、dev 模式、Planning 机制、运行时进度追踪、env bootstrap、表格渲染、历史查询 CLI、微信最小前端、session routes、`/sessions` `/session`、两阶段调用默认开启 | ✅ |
 | M8（部分） | /prompt、Protected Content、Memory search、Compression Blocks 最小版、压缩前记忆落盘评估版 | ✅ |
 
 ### 1.2 近期提交
 
 | 提交 | 内容 |
 |------|------|
-| `ea7acfe` | `/session` 返回统一附带用法说明，并支持按 `/sessions` 序号切换 |
-| `588f759` | 接入微信前端，补 session routes，实现跨端手动切换会话 |
-| `f72a883` | 增加智读客户端与相关分析资料 |
-| `0ab1bd5` | 增加 office-word 文档办公技能 |
-| `37ba0c0` | TelegramStreamer 改为单 worker 模型，限流与停机不再阻塞主链路 |
+| `d6406be` | 新增案例目录与示例脚本，README 加入案例段落 |
+| `fe17207` | 默认启用 invoice skill |
+| `5425d5c` | 新增 invoice 识别脚本与技能说明 |
+| `af249e9` | `/new` 时清理共享会话缓存并重置 overridden route |
+| `79e6464` | 提升 session store 序列化与清理容错 |
 
-351/351 测试通过。
+390/390 测试通过。
 
 ### 1.3 已确认的技术决策
 
@@ -191,21 +191,20 @@ Claude Code 只保留最近 N 个工具结果，更早的自动清除。当前 r
 
 ## 5. 下一阶段主线
 
-### P3 两阶段调用（draft + verify，下一步是默认可靠化）
+### P3 两阶段调用（draft + verify，已默认开启）
 
 **来源**：Meta-Harness 论文 + `project-roadmap.md` M7 待做项
 
 **方案**：先生成变更，再独立验证（lint、类型检查、测试），确认后算完成。
 
-**实现结果**：当前在本轮检测到文件修改后，可按配置自动注入验证指令，再跑有限轮 verify loop。基础链路已具备，但默认关闭，需要显式开启 `verify_enabled`。
+**实现结果**：当前在本轮检测到文件修改后，可按配置自动注入验证指令，再跑有限轮 verify loop。`verify_enabled` 默认开启；默认验证命令为 `ruff check . && pytest tests/ -x -q`，并已把 `ruff` 纳入 dev 依赖。用户仍可通过配置关闭或替换验证命令。
 
 依赖 P0.3（session summary 质量），因为两阶段调用会显著增加每轮消息数。
 
-**下一步重点**：
+**后续重点**：
 
-- 明确默认开启条件、失败回退和超时策略
-- 补充“修改后必须验证”的回归测试与文档说明
 - 避免 verify loop 与上下文压缩、tool result 清理相互打架
+- 基于真实使用观察默认验证命令是否需要按项目类型细分
 
 ---
 
@@ -303,10 +302,6 @@ base → planning → PROJECT.md → USER.local.md → MEMORY.md → skills → 
 ## 8. 建议执行顺序
 
 ```
-文档与状态收口
-       ↓
-P3    两阶段调用默认可靠化
-       ↓
 P0    搜索工具链工程化闭环（rg / fd）
        ↓
 M6    外部结果进入 summary / memory 的规则收敛

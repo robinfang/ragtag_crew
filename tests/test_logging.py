@@ -8,7 +8,6 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from ragtag_crew.config import settings
 
 
 class SetupLoggingTests(unittest.TestCase):
